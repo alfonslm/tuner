@@ -76,3 +76,11 @@ dependencies {
     screenshotTestImplementation(libs.screenshot.validation.api)
     screenshotTestImplementation(libs.androidx.compose.ui.tooling)
 }
+
+// Unit tests that decide things from recorded audio (see ScaleFollowingTest) read the recordings
+// that `:engine:recordingsTest` decoded, when there are any; without them those tests are skipped.
+tasks.withType<Test>().configureEach {
+    val decoded = project(":engine").layout.buildDirectory.dir("recordings").get().asFile
+    if (decoded.isDirectory) environment("TUNER_RECORDING_SET", decoded.path)
+    testLogging { showStandardStreams = true }
+}

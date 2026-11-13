@@ -47,6 +47,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
@@ -298,11 +299,19 @@ private fun Display(state: TunerUiState, modifier: Modifier = Modifier) {
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
             )
-            // A string far from its note pulls the scale towards it; between readings the scale stays put.
-            val latest = remember { arrayOf(ScaleWindow()) }
-            if (cents != null) latest[0] = scaleWindow(cents.toFloat())
-            val scaleCentre by animateFloatAsState(latest[0].centre, animationSpec = tween(durationMillis = 150), label = "scaleCentre")
-            val scaleRange by animateFloatAsState(latest[0].range, animationSpec = tween(durationMillis = 150), label = "scaleRange")
+            // A string far from its note pulls the scale towards it, but only a reading that is
+            // live, clear and steady may move it (see ScaleFollower); otherwise it stays put.
+            // A preview has one reading and no time for it to prove itself, so there it is taken at its word.
+            val preview = LocalInspectionMode.current
+            val follower = remember { ScaleFollower(if (preview) scaleWindow(cents?.toFloat()) else ScaleWindow()) }
+            val live = shown?.takeIf { state.live }
+            val target = follower.follow(
+                cents = live?.cents?.toFloat(),
+                unclear = unclarity(live?.spreadCents?.toFloat(), live?.confidence?.toFloat()),
+                time = state.latest?.time ?: 0.0,
+            )
+            val scaleCentre by animateFloatAsState(target.centre, animationSpec = tween(durationMillis = 250), label = "scaleCentre")
+            val scaleRange by animateFloatAsState(target.range, animationSpec = tween(durationMillis = 250), label = "scaleRange")
             val window = ScaleWindow(scaleCentre, scaleRange)
             Column(Modifier.weight(1f)) {
                 Meter(

@@ -18,7 +18,12 @@ to `./gradlew test`, which does not run it (the JVM cannot decode the files).
 
 - It applies to any change that can alter what the engine outputs: DSP,
   detection, lock logic, smoothing, and every default in `TunerConfig`.
-  UI-only changes are exempt, but say so instead of implying they were checked.
+- It also applies to anything in the app that is decided from readings (when
+  the scale moves, how the needle looks). Once the recordings are decoded,
+  `./gradlew :app:testDebugUnitTest` runs the app's tests that use them
+  (`ScaleFollowingTest`); before that they are skipped, silently.
+- Changes that are only drawing or layout are exempt, but say so instead of
+  implying they were checked.
 - If it fails, either the change is wrong or the engine now hears a real
   instrument differently on purpose. In the second case update the figures in
   `RecordingsTest` and give the reason in the commit message.

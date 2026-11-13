@@ -110,6 +110,53 @@ fun scaleWindow(cents: Float?): ScaleWindow {
     return ScaleWindow(side * range * (1 - TARGET_INSET), range)
 }
 
+/** A reading has to be at least this clear ([unclarity] at most this) for the scale to follow it. */
+private const val FOLLOW_UNCLARITY = 0.6f
+
+/** Readings belong together while each is within this many cents of the one before... */
+private const val FOLLOW_JUMP_CENTS = 15f
+
+/** ...and no further apart in time than this (seconds). */
+private const val FOLLOW_GAP_SECONDS = 0.25
+
+/** The scale follows readings that have belonged together for this long (seconds). */
+private const val FOLLOW_DWELL_SECONDS = 0.4
+
+/**
+ * Decides when the scale moves ([scaleWindow] says where to).
+ *
+ * Left to itself the scale would go wherever the latest reading is, and in a
+ * room with a television on that is all over the place: a stray reading two
+ * semitones from the nearest string, a slide and a zoom, and back, several
+ * times a second. So the scale only follows readings that have earned it: a
+ * run of clear ones (the estimates agree and the note is most of what is
+ * sounding), each close to the one before, that has lasted a moment. A
+ * string does that, also while it is being tuned; noise does not. Until
+ * then, and whenever there is no such run, the scale stays where it is.
+ */
+class ScaleFollower(initial: ScaleWindow = ScaleWindow()) {
+    var window: ScaleWindow = initial
+        private set
+
+    private var runSince = 0.0
+    private var lastTime = Double.NEGATIVE_INFINITY
+    private var lastCents = 0f
+
+    /**
+     * @param cents the reading, or `null` if there is none
+     * @param unclear how far it is from one clear note, see [unclarity]
+     * @param time when it was taken, in seconds on any steadily running clock
+     */
+    fun follow(cents: Float?, unclear: Float, time: Double): ScaleWindow {
+        if (cents == null || unclear > FOLLOW_UNCLARITY) return window
+        if (time - lastTime > FOLLOW_GAP_SECONDS || abs(cents - lastCents) > FOLLOW_JUMP_CENTS) runSince = time
+        lastTime = time
+        lastCents = cents
+        if (time - runSince >= FOLLOW_DWELL_SECONDS) window = scaleWindow(cents)
+        return window
+    }
+}
+
 /** A reading is fully clear up to this much scatter (cents, one standard deviation)... */
 private const val CLEAN_SPREAD_CENTS = 1f
 

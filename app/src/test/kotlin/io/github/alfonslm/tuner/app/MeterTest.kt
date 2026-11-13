@@ -2,6 +2,7 @@ package io.github.alfonslm.tuner.app
 
 import io.github.alfonslm.tuner.app.ui.headTallness
 import io.github.alfonslm.tuner.app.ui.needleOpacity
+import io.github.alfonslm.tuner.app.ui.ScaleFollower
 import io.github.alfonslm.tuner.app.ui.ScaleWindow
 import io.github.alfonslm.tuner.app.ui.scaleWindow
 import io.github.alfonslm.tuner.app.ui.unclarity
@@ -9,6 +10,8 @@ import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+
+private const val FRAME = 1024.0 / 48000
 
 class MeterTest {
     @Test
@@ -45,6 +48,67 @@ class MeterTest {
         // The flat side mirrors the sharp side.
         assertEquals(-scaleWindow(120f).centre, scaleWindow(-120f).centre)
         assertEquals(scaleWindow(120f).range, scaleWindow(-120f).range)
+    }
+
+    @Test
+    fun `the scale does not move for noise`() {
+        // A room with something else going on: bursts of a few stray readings anywhere within
+        // three semitones, some of them looking perfectly clear, with pauses in between.
+        val random = java.util.Random(11)
+        val follower = ScaleFollower()
+        var time = 0.0
+        repeat(400) {
+            val cents = -300f + 600f * random.nextFloat()
+            val unclear = if (random.nextInt(3) == 0) 0.1f else 0.9f
+            repeat(2 + random.nextInt(9)) {
+                time += FRAME
+                assertEquals(ScaleWindow(), follower.follow(cents + random.nextFloat(), unclear, time), "moved at $time for $cents")
+            }
+            repeat(random.nextInt(12)) {
+                time += FRAME
+                assertEquals(ScaleWindow(), follower.follow(null, 0f, time))
+            }
+        }
+    }
+
+    @Test
+    fun `the scale follows a string that is steadily far out, and one being tuned`() {
+        val follower = ScaleFollower()
+        var time = 0.0
+        fun hold(cents: Float, seconds: Double, unclear: Float = 0.1f): ScaleWindow {
+            var window = follower.window
+            repeat((seconds / FRAME).toInt()) {
+                time += FRAME
+                window = follower.follow(cents, unclear, time)
+            }
+            return window
+        }
+        // A string 57 cents flat: not at once...
+        assertEquals(ScaleWindow(), hold(-57f, 0.3))
+        // ...but soon.
+        assertEquals(scaleWindow(-57f), hold(-57f, 0.2))
+        // A stray reading or two elsewhere do not unsettle it.
+        assertEquals(scaleWindow(-57f), hold(140f, 0.1))
+        assertEquals(scaleWindow(-57f), hold(-57f, 0.1))
+        hold(-57f, 0.5)
+        // However long an unclear reading says otherwise, the scale stays.
+        assertEquals(scaleWindow(-57f), hold(120f, 2.0, unclear = 0.9f))
+        // The string again, and tuned up a little at a time: the scale goes along without waiting.
+        hold(-57f, 0.5)
+        var cents = -57f
+        while (cents < -20f) {
+            cents += 0.5f
+            time += FRAME
+            assertEquals(scaleWindow(cents), follower.follow(cents, 0.1f, time), "at $cents")
+        }
+        // Another string, in tune: back to the middle, after the same short wait.
+        assertEquals(scaleWindow(-20f), hold(1f, 0.3))
+        assertEquals(ScaleWindow(), hold(1f, 0.2))
+        // A pause in the readings starts the wait over.
+        hold(90f, 0.3)
+        time += 0.5
+        assertEquals(ScaleWindow(), hold(90f, 0.3))
+        assertEquals(scaleWindow(90f), hold(90f, 0.2))
     }
 
     @Test

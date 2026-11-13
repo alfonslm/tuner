@@ -82,6 +82,13 @@ web page: browsers only *request* that processing be turned off.
   against the end; it slides only as far as leaves the in-tune zone in sight
   at the other end, and for a string further out than that (about 90 cents)
   it shows more cents instead. The waterfall moves with it.
+  The scale only follows readings that have earned it (`ScaleFollower`): a
+  run of clear ones, each within 15 cents of the one before, that has lasted
+  0.4 s. A string does that, also while it is being tuned; noise does not.
+  Before this the scale went wherever the latest reading was, and in a room
+  with a television on it slid and zoomed several times a second. Run through
+  the engine, twenty seconds of speech-like chatter produce about a hundred
+  stray readings and do not move the scale once.
 - **The waterfall** under it: the last eight seconds on the same horizontal
   scale, newest at the top and moving down, in one of two styles chosen in the
   settings.
@@ -730,7 +737,7 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
     it chooses only among the tunings in use, tells standard from Drop D by
     the low string, reaches down to the B0 of a 5-string bass when that is in
     use, and recognises a custom tuning.
-- **28 app tests**.
+- **32 app tests** (one of them on the recordings, when those have been decoded).
   - Nine drive the real pipeline (view model → flow → engine) with a synthetic
     microphone: a tone gets locked and shown, its spectrogram rows arrive
     without a gap, stopping closes the stream, a microphone that fails to open
