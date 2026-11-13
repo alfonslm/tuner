@@ -86,9 +86,10 @@ web page: browsers only *request* that processing be turned off.
     stiff or dying one a wider and fainter one, a second string a second
     stripe, and silence is black. The tuner's reading runs through it as a
     thin white line. For contrast, brightness is shaped in two parts: within a
-    row, anything well below the row's peak is darkened, so the wide faint
-    skirts of a spectral peak do not haze over the scale; and quiet rows are
-    lifted, so a note that has faded to a tenth of full level still shows.
+    row it rises exponentially towards the row's peak (half the peak's level
+    is drawn at 8 %), so a clear peak is a clear line and the wide faint
+    skirts around it do not haze over the scale; and quiet rows are lifted, so
+    a note that has faded to a tenth of full level still shows.
   - *Line*: only the reading, in the colour the needle had at each moment.
 
   Either way, something running straight down is a steady pitch and something

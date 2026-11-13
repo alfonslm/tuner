@@ -27,6 +27,7 @@ import io.github.alfonslm.tuner.dsp.SPECTRUM_RANGE_CENTS
 import io.github.alfonslm.tuner.engine.SpectrumRow
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.expm1
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
@@ -189,11 +190,14 @@ private const val LEVEL_FLOOR = 0.03f
 private const val LOUDNESS_GAMMA = 0.4f
 
 /**
- * Above 1: within a row, darkens everything that is well below the row's peak.
- * The skirts of a spectral peak are wide and faint; without this they haze over
- * the scale and the stripe is hard to make out.
+ * How steeply brightness rises towards a row's peak. Within a row the curve is
+ * exponential, `(e^(k·x) - 1) / (e^k - 1)` for a level x relative to the peak,
+ * so the part near the peak is spread out and everything below it is pushed
+ * down: at k = 5, half the peak's level is drawn at 8 %, 80 % of it at 36 %.
+ * The skirts of a spectral peak are wide and faint; this is what keeps them
+ * from hazing over the scale and makes a clear peak a clear line.
  */
-private const val SHAPE_GAMMA = 2.2f
+private const val PEAK_STEEPNESS = 5f
 
 /**
  * Energy as light on black, in the colour of that part of the scale.
@@ -202,7 +206,7 @@ private const val SHAPE_GAMMA = 2.2f
  * @param loudness how bright the row as a whole is, 0..1
  */
 private fun stripeColor(shape: Float, loudness: Float, hue: Int): Int {
-    val glow = shape.coerceIn(0f, 1f).pow(SHAPE_GAMMA)
+    val glow = expm1(PEAK_STEEPNESS * shape.coerceIn(0f, 1f)) / expm1(PEAK_STEEPNESS)
     val alpha = (glow * loudness * 255).roundToInt()
     if (alpha < 4) return 0
     // The very centre of the stripe burns through to white.
