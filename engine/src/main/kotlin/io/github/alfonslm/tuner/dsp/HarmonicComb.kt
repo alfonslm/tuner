@@ -73,32 +73,58 @@ fun buildComb(out: DoubleArray, f0: Double, halfWidthCents: Double, model: Harmo
     }
 }
 
-data class HarmonicProfile(
+/**
+ * How a spectrum compares with a string sounding at some pitch. Each number
+ * answers one question, and none of them minds other strings ringing along:
+ * when tuning, the strings plucked a moment ago are still sounding, so "is
+ * this the only thing I hear?" is the wrong question to ask.
+ */
+class HarmonicProfile(
     /**
-     * 0..1: share of the energy in the string's band that sits on the partials of
-     * the pitch, corrected for what broadband noise would put there by chance.
-     * Low in noise and when nothing string-like is sounding.
+     * Is there a string at all? Energy on the partials, in multiples of what the
+     * noise floor alone would put there. Around zero in noise, tens to thousands
+     * for a sounding string.
      */
-    val salience: Double,
+    val prominence: Double,
     /**
-     * 0..1: share of the *tonal* energy (everything standing out of the noise
-     * floor) that the partials account for. Stays near 1 for the right string
-     * even in heavy noise, and drops when another note is sounding whose partials
-     * only partly coincide with the comb (a fourth, a fifth, an octave or a
-     * twelfth below).
+     * Is it the main thing in its band? 0..1: share of the tonal energy
+     * (everything standing out of the noise floor) that sits on the partials.
      */
     val explained: Double,
     /**
-     * Smallest share of harmonic energy found on partials that are NOT a multiple
-     * of m (m = 2, 3, 5, 7). Near zero means the sound is really a note m times
-     * higher and the pitch is only its sub-harmonic.
+     * Is it really this low? For m = 2, 3, 5, 7: the share of harmonic energy on
+     * partials that are NOT a multiple of m. Near zero means the sound is a note
+     * m times higher, and the pitch only its sub-harmonic.
      */
-    val fundamentalSupport: Double,
-)
+    private val support: DoubleArray,
+    /**
+     * Is it really this high? Energy found where the partials of a note 2, 3 or
+     * 4 times lower would lie (between those of the pitch), relative to the
+     * energy on the partials themselves; the largest of the three. Above about
+     * one half, the pitch is more likely an overtone of that lower note.
+     */
+    val subharmonic: Double,
+    /**
+     * 0..1: share of all energy in the band that sits on the partials, corrected
+     * for chance. A plain "how clean is it" figure, used as the reading's confidence.
+     */
+    val salience: Double,
+) {
+    /** The smallest [supportFor] of any m. */
+    val fundamentalSupport: Double get() = support.min()
+
+    /** Share of harmonic energy that speaks against the sound being a note [multiple] times higher. */
+    fun supportFor(multiple: Int): Double {
+        var least = 1.0
+        for (i in PRIMES.indices) if (multiple % PRIMES[i] == 0) least = min(least, support[i])
+        return least
+    }
+}
 
 private val PRIMES = intArrayOf(2, 3, 5, 7)
-private val SUBHARMONIC_FRACTIONS = doubleArrayOf(1.0 / 3, 1.0 / 2, 2.0 / 3)
-private val NO_MATCH = HarmonicProfile(0.0, 0.0, 0.0)
+private val FULL_SUPPORT = DoubleArray(PRIMES.size) { 1.0 }
+private val NO_SUPPORT = DoubleArray(PRIMES.size)
+private val NO_MATCH = HarmonicProfile(0.0, 0.0, NO_SUPPORT, 0.0, 0.0)
 private val LN2 = ln(2.0)
 
 /** Measures how well the (unfiltered) spectrum matches a string sounding at [f0]. */
@@ -152,29 +178,39 @@ fun harmonicProfile(power: DoubleArray, f0: Double, model: HarmonicModel, geomet
         tonalHarmonic += energies[k]
     }
     val tonalBand = bandEnergy - bandBins * noisePerBin
-    if (!(tonalHarmonic > 0) || !(tonalBand > 0)) return HarmonicProfile(salience, 0.0, 0.0)
+    if (!(tonalHarmonic > 0) || !(tonalBand > 0)) return HarmonicProfile(0.0, 0.0, NO_SUPPORT, 0.0, salience)
 
-    // The pitch may itself be the 2nd or 3rd partial of a lower note (typical for
-    // the tail of a low string, when little else is left). That note's own lowest
-    // partials sit below the band examined so far: count them as unexplained too.
-    var below = 0.0
-    for (fraction in SUBHARMONIC_FRACTIONS) {
-        val centre = (f0 * fraction / binHz).roundToInt()
-        val from = max(1, centre - halfBins)
-        val to = min(bandFrom - 1, centre + halfBins)
-        if (to < from) continue
-        var sum = 0.0
-        for (b in from..to) sum += power[b]
-        below += max(0.0, sum - (to - from + 1) * noisePerBin)
-    }
-    val explained = min(1.0, tonalHarmonic / (tonalBand + below))
+    val prominence = if (noisePerBin > 0) tonalHarmonic / (harmonicBins * noisePerBin) else Double.MAX_VALUE
+    val explained = min(1.0, tonalHarmonic / tonalBand)
 
-    var fundamentalSupport = 1.0
-    for (m in PRIMES) {
+    val support = DoubleArray(PRIMES.size) { 1.0 }
+    for (i in PRIMES.indices) {
+        val m = PRIMES[i]
         if (m > count) break
         var offMultiples = 0.0
         for (k in 1..count) if (k % m != 0) offMultiples += energies[k - 1]
-        fundamentalSupport = min(fundamentalSupport, offMultiples / tonalHarmonic)
+        support[i] = offMultiples / tonalHarmonic
     }
-    return HarmonicProfile(salience, explained, fundamentalSupport)
+
+    // Where would the partials of a note d times lower be? On ours, and in between. Energy
+    // in between is that note's and nobody else's.
+    var subharmonic = 0.0
+    for (d in 2..4) {
+        // Stay clear of our own partials' lobes, which are `spacing / d` bins away.
+        val reach = min(halfBins, floor(spacing / d - halfBins - 1).toInt())
+        if (reach < 1) continue
+        var between = 0.0
+        for (j in 1 until count * d) {
+            if (j % d == 0) continue
+            val centre = (partialFrequency(f0 / d, j, model.inharmonicity) / binHz).roundToInt()
+            val from = max(1, centre - reach)
+            val to = min(lastBin, centre + reach)
+            if (to < from) continue
+            var sum = 0.0
+            for (b in from..to) sum += power[b]
+            between += max(0.0, sum - (to - from + 1) * noisePerBin)
+        }
+        subharmonic = max(subharmonic, between / tonalHarmonic)
+    }
+    return HarmonicProfile(prominence, explained, support, subharmonic, salience)
 }

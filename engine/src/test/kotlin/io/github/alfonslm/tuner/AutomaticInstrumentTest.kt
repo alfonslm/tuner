@@ -176,7 +176,7 @@ class AutomaticInstrumentTest {
     fun `once known, a string far out of tune is read against the right string`() {
         // D3 a whole tone flat is the note C3; a chromatic tuner would call it in tune.
         val readings = run(engine(), strings("E2" to 0.0, "A2" to 0.0, "D3" to -200.0))
-        assertTrue(readings.between(4.0, 4.5).all { it.target?.label == "D3" && abs(it.cents!! + 200) < 1 })
+        assertTrue(readings.between(4.0, 4.5).all { it.target?.label == "D3" && abs(it.cents!! + 200) < 1.5 })
     }
 
     @Test

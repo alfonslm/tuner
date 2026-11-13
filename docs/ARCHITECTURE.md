@@ -123,6 +123,7 @@ engine/src/main/kotlin/io/github/alfonslm/tuner/
     Spectral.kt             windowed power spectrum → filtered autocorrelation
     WideDetector.kt         note-agnostic pitch detector (acquisition, watchdog)
     HarmonicComb.kt         string model: comb filter + harmonic validation
+    SpectralHistory.kt      what was sounding before the last pluck, to take it away
     FocusedDetector.kt      target-aware pitch detector (tracking)
     FoldedSpectrum.kt       one row of the spectrogram: partials folded onto a cents scale
   music/
@@ -236,20 +237,69 @@ gain
 | --- | --- |
 | remove everything between the partials | hum, room noise, speech and other strings never reach the estimator |
 | search only lags near the target period | octave errors — the classic tuner failure — become impossible |
-| size the window for this one note (16 periods) | low strings get a long, precise window; high strings a short, fast one |
+| size the window for this one note (120 to 150 ms) | fine enough to keep the partials of *other* strings out of each pass band |
 | narrow the comb as the string approaches | maximum selectivity exactly when the last few cents matter |
 
 ### Keeping it honest
 
 A comb makes *any* input look periodic at the target, so every focused
 estimate is checked against the **unfiltered** spectrum (`harmonicProfile()`).
-A reading is only valid if all three hold:
+
+The check must not ask "is this the only thing sounding?". While tuning it
+never is: the strings plucked a moment ago are still ringing. It asks four
+narrower questions, and a reading is valid if all four are answered well:
 
 | Check | Question | Rejects |
 | --- | --- | --- |
-| `salience` | Is the band's energy concentrated on the partials, beyond what noise would put there by chance? | silence, noise, a note that has died away |
-| `explained` | Of the *tonal* energy (above the measured noise floor), how much do these partials account for? Includes where a lower note's own partials would be. | another string a fourth/fifth away; the tail of a lower string whose 2nd/3rd partial lands near the target |
-| `fundamentalSupport` | Is there energy on partials that are *not* multiples of 2, 3, 5, 7? | a note an octave (or twelfth…) *above* the target, all of whose partials fit the comb — e.g. E4 while locked on E2 |
+| `prominence` | Do the partials stand out of the noise floor? (Energy on them, in multiples of what the floor alone would put there.) | silence, noise, a note that has died away |
+| `explained` | Is the string the main thing in its band? (At least 45 % of the tonal energy.) | a string that has faded below the others |
+| `fundamentalSupport` | Is there energy on partials that are *not* multiples of 2, 3, 5, 7? | a note an octave (or twelfth…) *above* the target, all of whose partials fit the comb, e.g. E4 while locked on E2 |
+| `subharmonic` | Is there less energy *between* the partials, where those of a note 2, 3 or 4 times lower would lie, than on them? | a lower string whose overtone lands on the target, e.g. E2 while locked on E4 |
+
+The last limit is lenient (as much energy between the partials as on them),
+because that is also where the partials of other ringing strings fall. A
+pinned string uses a stricter one, since nothing else then guards it.
+
+### Strings that are still ringing
+
+On a guitar the low E and the A string are exact sub-octaves of the high E:
+82.4 × 4 and 110 × 3 are both 330 Hz. Pluck the high E while either still
+rings and the combined sound repeats at the *lower* string's period. In a
+single frame that is indistinguishable from the lower string alone with weak
+overtones. An analysis of one frame at a time has to guess, and whichever way
+it leans, it is wrong for one of the two.
+
+What tells them apart is time: a ringing string only fades, the plucked one
+appears. `SpectralHistory` uses that.
+
+- It keeps a short run of recent spectra (half a second). The share of the
+  current spectrum that stands well above their average is the **novelty**;
+  it is near zero for anything steady or fading, noise included, and jumps
+  when a note starts. A jump is a pluck.
+- At a pluck, the least each bin has held over that run becomes **the
+  background**: what was sounding before.
+- From then on both detectors look first at the spectrum with the background
+  taken away. The strings that were already ringing are gone from it; the new
+  one is nearly intact (in the tests: under 5 % of the old string left, over
+  95 % of the new one kept). Only if that gives no clear note do they fall
+  back to the whole sound.
+- The background fades out over about 1.5 s. The strings it stands for are
+  dying away too, and taking away more than is really still there would eat
+  into the new string's partials where the two lie close.
+
+The focused detector, which is created after the pluck that led to its lock,
+gets its background from the last second of audio still in the buffer.
+
+Two further things make a mixture easier:
+
+- **Window length.** Every focused window is at least 120 ms, which resolves
+  17 Hz. Shorter windows had been used for high strings, but what crowds a
+  high string is not its own partials: the second partial of a D string lies
+  36 Hz below a high E, and inside a 50 ms window's reach it pulled the
+  reading flat by 6 cents at a level 12 dB below the E.
+- **The wide detector's choice of period.** It takes the shortest period that
+  is at least 65 % as good as the best, not 90 %, so a quieter string an
+  octave or two below does not win merely because its period fits both.
 
 ### The spectrogram
 
@@ -335,11 +385,20 @@ display is never blank while the decision is being made.
 
 **While locked**, per frame, in this order (`TunerEngine.trackLocked`):
 
-1. Focused estimate valid, and the wide detector does not steadily report a
-   different note → use it. If the wide detector reports an *overtone* of the
-   focused pitch, that is its own octave error and is ignored.
-2. Wide detector steadily on a different target → move the lock there at once
-   (plucking the next string re-targets in about a third of a second).
+1. Focused estimate valid → use it, unless the wide detector steadily names
+   another string *and* that is a new note. Whether it is depends on how the
+   two relate:
+   - an **overtone** of the locked string: usually the wide detector's own
+     octave error, and ignored; believed only if little energy is left on the
+     locked string's other partials (the higher string has been plucked while
+     this one rings on);
+   - a note the locked string is **an overtone of**: with both ringing, their
+     common period is the lower one's, so the wide detector says that;
+     believed only if that string has just been plucked;
+   - **unrelated**: believed.
+2. Focused estimate invalid and the wide detector steadily on a different
+   target → move the lock there at once (plucking the next string re-targets
+   in about a third of a second).
 3. Focused estimate invalid but the wide detector hears something inside the
    capture range → show the wide reading against the locked target (covers a
    string that jumped out of the narrowed comb).
@@ -419,9 +478,10 @@ ones that shape behaviour:
 | `lock.maxSpreadCents` | 30 | how steady it must be during that time |
 | `lock.holdMs` | 2500 | silence tolerated before unlocking |
 | `focus.marginCents` | 35 | comb half-width when the string is in tune |
-| `focus.periods` / `maxFrameMs` | 16 / 150 | focused analysis window |
-| `focus.minSalience` / `minExplained` / `minFundamentalSupport` | 0.5 / 0.8 / 0.06 | validation thresholds |
-| `wide.minClarity` | 0.85 | periodicity needed for a wide-band reading |
+| `focus.minFrameMs` / `maxFrameMs` | 120 / 150 | focused analysis window |
+| `focus.minProminence` / `minExplained` / `minFundamentalSupport` / `maxSubharmonic` | 12 / 0.45 / 0.06 / 1.0 | validation thresholds |
+| `wide.minClarity` / `peakPickRatio` | 0.75 / 0.65 | periodicity needed for a wide-band reading; how readily a shorter period is preferred |
+| `fresh.memoryMs` / `fadeMs` / `onsetRise` | 500 / 1500 / 0.25 | hearing a plucked string apart from ringing ones |
 | `display.medianFrames` / `smoothing` | 3 / 0.5 | how hard the reading is smoothed; lower `smoothing` is steadier and slower |
 | `display.inTuneCents` / `inTuneHoldMs` | 3 / 400 | when the display turns green |
 
@@ -433,7 +493,7 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
 
 `./gradlew test` needs no device. It runs:
 
-- **56 engine tests** against a plucked-string synthesizer (inharmonic
+- **64 engine tests** against a plucked-string synthesizer (inharmonic
   partials with individual decay, weak fundamental, white noise, mains hum):
   - each guitar string is identified, locked within 0.5 s of the pluck, and
     read to within 0.3 cent;
@@ -445,6 +505,12 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
     instrument is rejected even with the comb fully open;
   - E2 ↔ E4, string changes, chromatic hand-off through a semitone, hold and
     release, and pinning behave as described above;
+  - with the six strings plucked one after another and all left ringing, 2 s
+    or 1.2 s apart, every string is followed for the whole of its time and
+    read to within 3.5 cents (measured: within 1.5);
+  - the high E is read to within 1.5 cents over a ringing low E, A or B at
+    12, 6 and 3 dB below it, and the tuner goes to the low E when that is
+    plucked over a ringing high E;
   - a pitch moving at 30 cents a second is trailed by the needle by 2 to 4.5
     cents (about 0.11 s), and every reading is within 0.7 cent of the truth at
     the moment it says it describes;
@@ -490,7 +556,18 @@ been through the engine yet.
 
 ## 8. Limits and next steps
 
-- **Not yet run on a phone.** Thresholds were set on synthetic signals and
+- **The ringing-string fix is verified in simulation only.** The first report
+  from a real phone was that the high E tracked badly even when loud. The
+  simulation reproduced that (and worse: readings dropped out for every string
+  plucked over ringing ones), and the tests above now pass, but whether this
+  was all of what happened on the device has to be confirmed there. Real
+  strings differ from the synthesized ones in ways that matter here: how fast
+  each partial decays, sympathetic vibration, how hard the pluck is.
+- **Two strings equally loud remain ambiguous.** When a ringing string is as
+  loud as the one just plucked, and for longer than about 1.5 s after the
+  pluck, the tuner may go to the wrong one of two harmonically related
+  strings. Plucking again settles it.
+- **Not yet run on a phone by me.** Thresholds were set on synthetic signals and
   will need a pass with a real instrument; the first things to check are
   `levelGateDb` and `wide.minClarity` against real phone microphones, and how
   much CPU the engine takes per block on a mid-range device.

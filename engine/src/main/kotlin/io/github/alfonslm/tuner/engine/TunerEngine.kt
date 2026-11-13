@@ -4,6 +4,7 @@ import io.github.alfonslm.tuner.dsp.AnalyzerPool
 import io.github.alfonslm.tuner.dsp.FocusedDetector
 import io.github.alfonslm.tuner.dsp.FocusedDetectorOptions
 import io.github.alfonslm.tuner.dsp.FocusedEstimate
+import io.github.alfonslm.tuner.dsp.FreshOptions
 import io.github.alfonslm.tuner.dsp.FoldedSpectrum
 import io.github.alfonslm.tuner.dsp.FoldedSpectrumOptions
 import io.github.alfonslm.tuner.dsp.PitchEstimate
@@ -96,6 +97,9 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
     private var lock: Lock? = null
     private var samples = 0L
 
+    /** Stream position at which the last pluck was noticed. */
+    private var pluckedAt: Long? = null
+
     /** Spectrogram analysis for the target currently on display; rebuilt when that changes. */
     private var spectrum: FoldedSpectrum? = null
     private var spectrumTargetId: String? = null
@@ -149,11 +153,15 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         val levelDb = 20 * log10(rms + 1e-9)
         val audible = levelDb > config.levelGateDb
         val wide = (if (audible) wideDetector.detect(widePower) else null)?.takeIf { it.clarity >= config.wide.minClarity }
+        if (audible && wideDetector.onset) {
+            pluckedAt = samples
+            lock?.detector?.pluck()
+        }
         val wideTarget = wide?.let { targets.nearest(it.frequency) }
 
         // 2. Has one note been sounding steadily?
         if (wide != null && wideTarget != null) {
-            stability.push(wideTarget, centsBetween(wide.frequency, wideTarget.frequency))
+            stability.push(wideTarget, centsBetween(wide.frequency, wideTarget.frequency), wide.fresh)
         } else {
             stability.push(null)
         }
@@ -248,13 +256,28 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         val elsewhere = !lock.pinned && settled != null && settled.target.id != lock.target.id
 
         if (focus != null && focus.valid) {
-            // The wide detector landing on an overtone of what the comb tracks is its own
-            // octave error – exactly the mistake the lock exists to prevent – not a new note.
-            val wideAgrees = wide != null && isOvertone(wide.frequency, focus.frequency)
-            if (!elsewhere || wideAgrees) {
+            // The wide detector steadily names another string. Is that a new note, or the same
+            // mixture of ringing strings heard differently? It depends on how the two relate.
+            var newNote = elsewhere
+            if (newNote && wide != null && settled != null) {
+                val above = overtoneNumber(wide.frequency, focus.frequency)
+                val below = overtoneNumber(focus.frequency, wide.frequency)
+                newNote = when {
+                    // An overtone of what the comb tracks is usually the wide detector's own
+                    // octave error - the mistake the lock exists to prevent - unless the string's
+                    // own partials say the sound really has moved up there.
+                    above > 1 -> focus.profile.supportFor(above) < config.lock.minOvertoneSupport
+                    // A note that what the comb tracks is an overtone of: with both strings
+                    // ringing, their common period is the lower one's, so the wide detector says
+                    // that. Believe it only if that string has just been plucked.
+                    below > 1 -> settled.fresh
+                    else -> true
+                }
+            }
+            if (!newNote) {
                 lock.lastHeard = time
                 val target = followTarget(focus.frequency, time)
-                return Pitch(focus.frequency, target, PitchSource.FOCUSED, focus.salience, lock.frame.size)
+                return Pitch(focus.frequency, target, PitchSource.FOCUSED, focus.profile.salience, lock.frame.size)
             }
         }
 
@@ -297,7 +320,7 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
     private fun engage(target: Target, offsetCents: Double, pinned: Boolean, time: Double) {
         val focus = config.focus
         val captureCents = if (pinned) focus.pinnedCaptureCents else targets.captureCents(target)
-        val detector = detectors.getOrPut("${target.id}:$captureCents") {
+        val detector = detectors.getOrPut("${target.id}:$pinned") {
             FocusedDetector(
                 pool,
                 sampleRate,
@@ -311,12 +334,17 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
                     maxWidthCents = captureCents,
                     maxPartialHz = config.maxPartialHz,
                     minPeak = focus.minPeak,
-                    minSalience = focus.minSalience,
+                    minProminence = focus.minProminence,
                     minExplained = focus.minExplained,
                     minFundamentalSupport = focus.minFundamentalSupport,
+                    maxSubharmonic = if (pinned) focus.pinnedMaxSubharmonic else focus.maxSubharmonic,
+                    blockSize = blockSize,
+                    fresh = freshOptions(guard = 0),
                 ),
             )
         }
+        // Let it learn what was sounding before this note, from the audio still in the buffer.
+        detector.begin(pluckedAt?.let { samples - it }) { samplesAgo, frame -> ring.copyLatest(frame, samplesAgo) }
         lock = Lock(
             target = target,
             pinned = pinned,
@@ -365,7 +393,15 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         val longestLag = ceil(sampleRate / minHz).toInt() + 4
         val wideLength = max(config.wide.minFrameMs * sampleRate / 1000, config.wide.periods * sampleRate / minHz).roundToInt()
         wideAnalyzer = pool.get(sampleRate, nextPowerOfTwo(wideLength + longestLag), wideLength)
-        wideDetector = WideDetector(wideAnalyzer, minHz, targets.maxHz, config.wide.peakPickRatio, config.maxPartialHz)
+        wideDetector = WideDetector(
+            wideAnalyzer,
+            minHz,
+            targets.maxHz,
+            config.wide.peakPickRatio,
+            config.maxPartialHz,
+            // Compare only with audio that ended before the current window began.
+            freshOptions(guard = (wideLength + blockSize - 1) / blockSize + 1),
+        )
         widePower = DoubleArray(wideAnalyzer.bins)
         wideFrame = FloatArray(wideLength)
 
@@ -376,6 +412,7 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
                 config.focus.minFrameMs * sampleRate / 1000,
                 config.focus.minPeriods * sampleRate / minHz,
                 config.spectrogram.maxFrameMs * sampleRate / 1000,
+                config.fresh.lookBackMs * sampleRate / 1000,
             ),
         ).toInt()
         if (!::ring.isInitialized || ring.capacity != capacity) ring = RingBuffer(capacity)
@@ -386,6 +423,7 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         smoother = ReadingSmoother(config.display)
         detectors.clear()
         lock = null
+        pluckedAt = null
         spectrum = null
         spectrumTargetId = null
 
@@ -396,6 +434,22 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         } else if (config.pinnedTargetId != null) {
             config = config.copy(pinnedTargetId = null)
         }
+    }
+
+    private fun freshOptions(guard: Int): FreshOptions? {
+        val fresh = config.fresh
+        if (!fresh.enabled) return null
+        val blockMs = blockSize * 1000.0 / sampleRate
+        val stride = max(1, (fresh.stepMs / blockMs).roundToInt())
+        return FreshOptions(
+            entries = max(2, ceil(fresh.memoryMs / (stride * blockMs)).toInt()),
+            stride = stride,
+            guard = guard,
+            fadeFrames = fresh.fadeMs / blockMs,
+            onsetRise = fresh.onsetRise,
+            minShare = fresh.minShare,
+            minClarity = fresh.minClarity,
+        )
     }
 
     private fun reading(
@@ -425,9 +479,9 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
     }
 }
 
-/** True if [frequency] is (close to) [fundamental] or one of its integer multiples. */
-private fun isOvertone(frequency: Double, fundamental: Double): Boolean {
+/** Which multiple of [fundamental] the [frequency] is (1 = the same pitch), or 0 if it is none of them. */
+private fun overtoneNumber(frequency: Double, fundamental: Double): Int {
     val ratio = frequency / fundamental
     val multiple = ratio.roundToInt()
-    return multiple >= 1 && abs(1200 * log2(ratio / multiple)) <= 40
+    return if (multiple >= 1 && abs(1200 * log2(ratio / multiple)) <= 40) multiple else 0
 }

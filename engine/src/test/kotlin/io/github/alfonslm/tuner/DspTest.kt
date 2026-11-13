@@ -18,6 +18,7 @@ import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -32,13 +33,14 @@ class DspTest {
         periods = 16.0,
         maxFrame = 7200,
         minPeriods = 10.0,
-        minFrame = 1920,
+        minFrame = 5760,
         maxWidthCents = 280.0,
         maxPartialHz = 5000.0,
         minPeak = 0.5,
-        minSalience = 0.5,
-        minExplained = 0.8,
+        minProminence = 4.0,
+        minExplained = 0.45,
         minFundamentalSupport = 0.06,
+        maxSubharmonic = 0.5,
     )
 
     /** Wide detector covering the guitar's range, applied to the frame ending at sample `at`. */
@@ -194,8 +196,23 @@ class DspTest {
         // Late in the decay of a low E, on a mic that barely hears 82 Hz, the sound is
         // mostly its 165 Hz partial – which is within reach of a comb opened wide around D3.
         val tail = pluckedString(0.5, 82.41, partialAmplitudes = doubleArrayOf(0.5, 1.0, 0.45, 0.2, 0.04), decay = 30.0)
-        val estimate = focused(tail, 20000, 146.83, 400.0, focusOptions.copy(maxWidthCents = 400.0))
-        assertTrue(estimate?.valid != true)
+        // This is what pinning a string guards against, with its stricter limit on energy between the partials.
+        val pinned = focusOptions.copy(maxWidthCents = 400.0, maxSubharmonic = 0.35)
+        assertTrue(focused(tail, 20000, 146.83, 400.0, pinned)?.valid != true)
+    }
+
+    @Test
+    fun `focused detector accepts its string with others ringing, until one of them is the louder`() {
+        val e4 = detune(329.63, 5.0)
+        for ((name, other) in listOf("E2" to 82.41, "A2" to 110.0, "D3" to 146.83, "B3" to 246.94)) {
+            fun over(db: Double) = mix(pluckedString(0.5, e4), pluckedString(0.5, other, amplitude = 0.2 * 10.0.pow(db / 20), seed = 3))
+            for (db in listOf(-12.0, -6.0, -3.0)) {
+                val estimate = assertNotNull(focused(over(db), 20000, 329.63, 40.0))
+                assertTrue(estimate.valid, "E4 over $name at $db dB: ${estimate.profile.explained} ${estimate.profile.subharmonic}")
+                assertTrue(abs(cents(estimate.frequency, e4)) < 2.5, "E4 over $name at $db dB: ${cents(estimate.frequency, e4)}")
+            }
+            assertTrue(focused(over(8.0), 20000, 329.63, 40.0)?.valid != true, "E4 under a much louder $name")
+        }
     }
 
     @Test

@@ -29,6 +29,7 @@ data class TunerConfig(
     val levelGateDb: Double = -72.0,
     /** Partials above this frequency are ignored by both detectors. */
     val maxPartialHz: Double = 5000.0,
+    val fresh: FreshConfig = FreshConfig(),
     val wide: WideConfig = WideConfig(),
     val focus: FocusConfig = FocusConfig(),
     val lock: LockConfig = LockConfig(),
@@ -40,9 +41,20 @@ data class WideConfig(
     /** Window length in periods of the lowest note the instrument can produce. */
     val periods: Double = 8.0,
     val minFrameMs: Double = 40.0,
-    /** Minimum periodicity for a frame to count as a pitched note. */
-    val minClarity: Double = 0.85,
-    val peakPickRatio: Double = 0.9,
+    /**
+     * Minimum periodicity for a frame to count as a pitched note. Below this the
+     * estimate is too often wrong (in noise by tens of cents) to show. A string
+     * plucked over others that are still ringing does not have to reach it on
+     * the whole sound: it is heard on its own first, see [FreshConfig].
+     */
+    val minClarity: Double = 0.75,
+    /**
+     * The shortest period that is at least this good, relative to the best one,
+     * is taken as the pitch. Low enough that the string just plucked wins over a
+     * quieter one ringing an octave or two below it, whose longer period fits
+     * both strings and therefore always scores highest.
+     */
+    val peakPickRatio: Double = 0.65,
     /** How far outside the outermost strings the detector still listens. */
     val rangeMarginCents: Double = 300.0,
 )
@@ -51,17 +63,41 @@ data class FocusConfig(
     /** Preferred window length in periods of the locked note, capped at [maxFrameMs]... */
     val periods: Double = 16.0,
     val maxFrameMs: Double = 150.0,
-    /** ...but never fewer than this many periods (bass strings need the length). */
+    /** ...but never fewer than this many periods (bass strings need the length)... */
     val minPeriods: Double = 10.0,
-    val minFrameMs: Double = 40.0,
+    /**
+     * ...nor shorter than this. A window resolves what lies further apart than
+     * about two divided by its length: at 120 ms, 17 Hz. High strings need that
+     * as much as low ones, because what crowds them is not their own partials
+     * but those of the other strings still ringing: the second partial of a D
+     * string lies 36 Hz below a high E, and inside a 50 ms window's reach it
+     * pulls the reading flat by several cents.
+     */
+    val minFrameMs: Double = 120.0,
     /** The comb is kept this much wider than the current distance to the target. */
     val marginCents: Double = 35.0,
     /** Fraction of the remaining gap closed per frame when the comb narrows. */
     val narrowingRate: Double = 0.25,
     val minPeak: Double = 0.5,
-    val minSalience: Double = 0.5,
-    val minExplained: Double = 0.8,
+    /** The partials must stand this many times above what the noise floor alone would put there. */
+    val minProminence: Double = 12.0,
+    /** The string must hold this share of the tonal energy in its band: the main thing sounding, not the only one. */
+    val minExplained: Double = 0.45,
+    /** Least share of energy on partials that are not multiples of 2 (3, 5, 7): else it is a note that much higher. */
     val minFundamentalSupport: Double = 0.06,
+    /**
+     * Most energy allowed between the partials, relative to that on them. More
+     * than this, and what the comb found is taken for an overtone of a lower
+     * note. Lenient, because between the partials is also where the partials of
+     * other strings fall, and a string plucked a moment ago may well still be
+     * ringing nearly as loudly; the wide detector settles such cases over time.
+     */
+    val maxSubharmonic: Double = 1.0,
+    /**
+     * The same limit while a string is pinned. Strict, because nothing else then
+     * guards against showing the tail of a lower string as the pinned one.
+     */
+    val pinnedMaxSubharmonic: Double = 0.35,
     /** Capture reaches this far past the midpoint to the neighbouring target. */
     val captureOverlapCents: Double = 30.0,
     val maxCaptureCents: Double = 300.0,
@@ -78,6 +114,13 @@ data class LockConfig(
     val holdMs: Double = 2500.0,
     /** Frames without a usable estimate before the comb re-opens to the full capture range. */
     val reopenAfterFrames: Int = 4,
+    /**
+     * When the wide detector names an overtone of the locked string: below this
+     * share of energy on the string's other partials, believe it (the higher
+     * string has been plucked while this one rings on); above it, it is the wide
+     * detector's octave error.
+     */
+    val minOvertoneSupport: Double = 0.3,
     /** Chromatic / neighbouring-string hand-off: the new target must be closer by this much... */
     val handoffHysteresisCents: Double = 10.0,
     /** ...for this many frames in a row. */
@@ -112,4 +155,28 @@ data class SpectrogramConfig(
     val fadeInDb: Double = 10.0,
     /** A partial this far above the noise (dB) is drawn at full brightness. */
     val fullScaleDb: Double = 40.0,
+)
+
+/**
+ * Telling the string just plucked from the ones still ringing: both detectors
+ * first examine the spectrum with everything taken away that was already
+ * sounding before the latest pluck, and only if nothing clear is found there,
+ * the whole sound. See `SpectralHistory`.
+ */
+data class FreshConfig(
+    val enabled: Boolean = true,
+    /** The short run of spectra that "a moment ago" is taken from. */
+    val memoryMs: Double = 500.0,
+    /** Spectra are remembered this far apart. */
+    val stepMs: Double = 85.0,
+    /** The remembered background is faded out with this time constant; the strings it stands for are dying away too. */
+    val fadeMs: Double = 1500.0,
+    /** A pluck is a rise by this much in the share of the energy that was not there a moment ago. */
+    val onsetRise: Double = 0.25,
+    /** At least this share of the energy must stand above the background for that part to be examined on its own. */
+    val minShare: Double = 0.1,
+    /** Periodicity that part must have for the wide detector to believe its pitch. */
+    val minClarity: Double = 0.8,
+    /** Audio kept so that a detector starting on a new lock can still learn what was sounding before the pluck. */
+    val lookBackMs: Double = 1000.0,
 )

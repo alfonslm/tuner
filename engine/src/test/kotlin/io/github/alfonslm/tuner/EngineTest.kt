@@ -8,6 +8,7 @@ import io.github.alfonslm.tuner.engine.TunerMode
 import io.github.alfonslm.tuner.engine.TunerReading
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -158,15 +159,17 @@ class EngineTest {
     // --- robustness ---
 
     @Test
-    fun `keeps reading in noise where wide-band detection gives up`() {
+    fun `keeps reading in noise where wide-band detection gives up, and shows nothing rather than something wrong`() {
         val signal = mix(pluckedString(4.0, detune(G3, -6.0), amplitude = 0.25, decay = 1.2), whiteNoise(4.0, 0.02))
-        fun usable(mode: SmartFilterMode) = run(engine(guitar.copy(smartFilter = mode)), signal)
-            .between(1.5, 4.0)
-            .count { it.voiced && abs(it.cents!! + 6) < 3 }
-        val withFilter = usable(SmartFilterMode.AUTO)
-        val without = usable(SmartFilterMode.OFF)
-        assertTrue(withFilter > 60, "with filter: $withFilter")
-        assertTrue(withFilter > 2 * without, "with $withFilter, without $without")
+        fun readings(mode: SmartFilterMode) = run(engine(guitar.copy(smartFilter = mode)), signal).between(1.5, 4.0).filter { it.voiced }
+        val withFilter = readings(SmartFilterMode.AUTO)
+        val without = readings(SmartFilterMode.OFF)
+
+        // With the filter: a second and more of readings as the note sinks into the noise, every one of them right.
+        assertTrue(withFilter.size > 40, "with filter: ${withFilter.size}")
+        assertTrue(withFilter.all { abs(it.cents!! + 6) < 3 }, "worst ${withFilter.maxOf { abs(it.cents!! + 6) }}")
+        // Without it: far fewer that are right.
+        assertTrue(withFilter.size > 2 * without.count { abs(it.cents!! + 6) < 3 })
     }
 
     @Test
@@ -200,6 +203,69 @@ class EngineTest {
         // 2.5 s after the note is gone the tuner is searching again.
         assertTrue(readings.between(3.2, 5.0).any { it.mode == TunerMode.LOCKED })
         assertEquals(TunerMode.SEARCH, readings.last().mode)
+    }
+
+    // --- other strings still ringing ---
+
+    /** `signal` placed `seconds` into a buffer of `total` seconds. */
+    private fun at(total: Double, seconds: Double, signal: FloatArray): FloatArray {
+        val out = FloatArray((total * SAMPLE_RATE).toInt())
+        signal.copyInto(out, (seconds * SAMPLE_RATE).toInt(), 0, minOf(signal.size, out.size - (seconds * SAMPLE_RATE).toInt()))
+        return out
+    }
+
+    @Test
+    fun `follows the strings plucked one after another while the earlier ones ring on`() {
+        // Nobody damps the strings while tuning. Each is plucked while all before it are still
+        // sounding; by the last, the new string is about half of what the microphone hears.
+        for (config in listOf(guitar, TunerConfig())) {
+            for (gap in listOf(2.0, 1.2)) {
+                val total = 0.5 + 6 * gap
+                val signal = mix(
+                    *GUITAR_STRINGS.mapIndexed { i, (_, f) ->
+                        at(total, 0.5 + gap * i, pluckedString(total - 0.5 - gap * i, detune(f, 4.0), decay = 3.5, seed = i + 1))
+                    }.toTypedArray(),
+                    whiteNoise(total, 0.001),
+                )
+                val readings = run(engine(config), signal)
+                GUITAR_STRINGS.forEachIndexed { i, (label, _) ->
+                    val plucked = 0.5 + gap * i
+                    val heard = readings.between(plucked + 0.45, plucked + gap)
+                    val case = "${config.instrumentId}, ${gap}s apart, $label"
+                    assertTrue(heard.all { it.voiced && it.target!!.label == label }, "$case: ${heard.map { it.target?.label }.distinct()}")
+                    assertTrue(heard.all { abs(it.cents!! - 4) < 3.5 }, "$case: off by ${heard.maxOf { abs(it.cents!! - 4) }}")
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `reads the high E over a ringing low E, A or B, which share its overtones`() {
+        // E4 is the fourth partial of E2 and the third of A2: together with either, the sound
+        // repeats at the lower string's period, and in one frame cannot be told from that string alone.
+        for (config in listOf(guitar, TunerConfig())) {
+            for ((name, other) in listOf("E2" to E2, "A2" to A2, "B3" to 246.94)) {
+                for (db in listOf(-12.0, -6.0, -3.0)) {
+                    val signal = mix(
+                        pluckedString(2.2, other, amplitude = 0.2 * 10.0.pow(db / 20), decay = 6.0, seed = 9),
+                        at(2.2, 0.8, pluckedString(1.4, detune(E4, 5.0), decay = 3.0)),
+                        whiteNoise(2.2, 0.001),
+                    )
+                    val heard = run(engine(config), signal).between(1.3, 2.2)
+                    val case = "${config.instrumentId}: E4 over $name at $db dB"
+                    assertTrue(heard.all { it.voiced && it.target!!.label == "E4" }, "$case: ${heard.map { it.target?.label }.distinct()}")
+                    assertTrue(heard.all { abs(it.cents!! - 5) < 1.5 }, "$case: off by ${heard.maxOf { abs(it.cents!! - 5) }}")
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `goes to the lower string when that one is plucked over a ringing high E`() {
+        val signal = mix(pluckedString(2.5, E4, decay = 4.0), at(2.5, 1.0, pluckedString(1.5, detune(E2, -7.0), seed = 4)))
+        val readings = run(engine(), signal)
+        assertTrue(readings.between(0.6, 1.0).all { it.target?.label == "E4" })
+        assertTrue(readings.between(1.5, 2.5).all { it.voiced && it.target!!.label == "E2" && abs(it.cents!! + 7) < 2 })
     }
 
     // --- pinned target ---

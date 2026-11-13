@@ -19,18 +19,28 @@ data class FocusedDetectorOptions(
     val maxWidthCents: Double,
     val maxPartialHz: Double,
     val minPeak: Double,
-    val minSalience: Double,
+    /** Least [HarmonicProfile.prominence]: how far the partials must stand out of the noise. */
+    val minProminence: Double,
+    /** Least [HarmonicProfile.explained]: the string must be the main thing in its band, not the only thing. */
     val minExplained: Double,
+    /** Least [HarmonicProfile.fundamentalSupport]. */
     val minFundamentalSupport: Double,
+    /** Most [HarmonicProfile.subharmonic]. */
+    val maxSubharmonic: Double,
+    /** Samples per audio block: the step between frames. */
+    val blockSize: Int = 1024,
+    /** How the detector sets a newly plucked string apart from ones still ringing; `null` to analyse the whole sound only. */
+    val fresh: FreshOptions? = null,
 )
 
 class FocusedEstimate(
     val frequency: Double,
-    /** 0..1 – how string-like and on-target the sound is. */
-    val salience: Double,
-    val explained: Double,
+    /** How the spectrum compares with the target string sounding at [frequency]. */
+    val profile: HarmonicProfile,
     /** False when a pitch was found but the sound does not look like the target string. */
     val valid: Boolean,
+    /** True when measured on what is new in the spectrum, with the strings that were already ringing taken away. */
+    val fresh: Boolean = false,
 )
 
 /**
@@ -45,7 +55,9 @@ class FocusedEstimate(
  *    for high ones) instead of a compromise for the whole instrument.
  *
  * The price is that it will "find" something near the target in almost any
- * input, so every estimate is checked against the unfiltered spectrum.
+ * input, so every estimate is checked against the unfiltered spectrum: is
+ * there a string here, is it the main one sounding, and is it at this octave?
+ * Other strings ringing along do not fail the check; they are the normal case.
  */
 class FocusedDetector(
     pool: AnalyzerPool,
@@ -59,6 +71,9 @@ class FocusedDetector(
     private val power: DoubleArray
     private val comb: DoubleArray
     private val acf: DoubleArray
+    private val freshPower: DoubleArray
+    private val history: SpectralHistory?
+    private var primed = false
 
     init {
         val period = sampleRate / targetHz
@@ -72,6 +87,42 @@ class FocusedDetector(
         power = DoubleArray(analyzer.bins)
         comb = DoubleArray(analyzer.bins)
         acf = DoubleArray(analyzer.maxLag + 1)
+        freshPower = DoubleArray(analyzer.bins)
+        history = options.fresh?.let {
+            // Compare only with audio that ended before the current window began.
+            val guard = (frame + options.blockSize - 1) / options.blockSize + 1
+            SpectralHistory(analyzer.bins, it.entries, it.stride, guard, it.fadeFrames)
+        }
+    }
+
+    /**
+     * Starts over for a new lock. If the string was plucked recently enough, the
+     * detector learns from [past] what was sounding before the pluck, so that it
+     * can take that away: `past(samplesAgo, frame)` fills `frame` with the audio
+     * that ended `samplesAgo` samples ago and returns false if there is not that much.
+     *
+     * @param onsetSamplesAgo how long ago the last pluck was noticed, or `null` if not known
+     */
+    fun begin(onsetSamplesAgo: Long?, past: (samplesAgo: Int, frame: FloatArray) -> Boolean) {
+        val history = history ?: return
+        val stride = options.fresh?.stride ?: return
+        history.clear()
+        if (onsetSamplesAgo == null) return
+        val frame = FloatArray(frameLength)
+        // Frames that ended before the pluck, oldest first so that the latest are the ones kept.
+        val first = ((onsetSamplesAgo + options.blockSize - 1) / options.blockSize).toInt() + 1
+        val steps = generateSequence(first) { it + stride }.takeWhile { past(it * options.blockSize, frame) }.toList()
+        for (framesAgo in steps.asReversed()) {
+            past(framesAgo * options.blockSize, frame)
+            analyzer.powerSpectrum(frame, power)
+            history.prime(power, framesAgo)
+        }
+        primed = steps.isNotEmpty()
+    }
+
+    /** A pluck has just been noticed: what has been sounding until now is background from here on. */
+    fun pluck() {
+        history?.anchor()
     }
 
     val frameLength: Int get() = analyzer.frameLength
@@ -85,6 +136,24 @@ class FocusedDetector(
         analyzer.powerSpectrum(frame, power)
         buildComb(comb, targetHz, width, model, geometry)
 
+        // First what is new: the string just plucked, without the ones still ringing.
+        val history = history
+        val fresh = options.fresh
+        if (history != null && fresh != null) {
+            if (primed) {
+                // The frames learned in begin() all predate the pluck this lock came from.
+                primed = false
+                history.anchor()
+            }
+            val share = history.fresh(power, freshPower)
+            history.remember(power)
+            if (share >= fresh.minShare) estimate(freshPower, width, true)?.takeIf { it.valid }?.let { return it }
+        }
+        // Otherwise the whole sound.
+        return estimate(power, width, false)
+    }
+
+    private fun estimate(power: DoubleArray, width: Double, fresh: Boolean): FocusedEstimate? {
         val ratio = 2.0.pow(width / 1200)
         val period = analyzer.sampleRate / targetHz
         val from = max(2, floor(period / ratio).toInt())
@@ -102,12 +171,13 @@ class FocusedDetector(
         val profile = harmonicProfile(power, frequency, model, geometry)
         return FocusedEstimate(
             frequency = frequency,
-            salience = profile.salience,
-            explained = profile.explained,
+            profile = profile,
             valid = peak.value >= options.minPeak &&
-                profile.salience >= options.minSalience &&
+                profile.prominence >= options.minProminence &&
                 profile.explained >= options.minExplained &&
-                profile.fundamentalSupport >= options.minFundamentalSupport,
+                profile.fundamentalSupport >= options.minFundamentalSupport &&
+                profile.subharmonic <= options.maxSubharmonic,
+            fresh = fresh,
         )
     }
 }

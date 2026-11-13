@@ -4,8 +4,12 @@ import io.github.alfonslm.tuner.music.Target
 import kotlin.math.max
 import kotlin.math.min
 
-/** A target every recent frame agreed on, with the mean offset from it. */
-class Consensus(val target: Target, val cents: Double)
+/**
+ * A target every recent frame agreed on, with the mean offset from it.
+ *
+ * @param fresh true if any of those frames heard it as a note that had just started
+ */
+class Consensus(val target: Target, val cents: Double, val fresh: Boolean)
 
 /**
  * Answers "has the same note been sounding steadily?" over the last N frames
@@ -16,12 +20,14 @@ class StabilityWindow(frames: Int, private val maxSpreadCents: Double) {
     private val size = max(2, frames)
     private val targets = arrayOfNulls<Target>(size)
     private val cents = DoubleArray(size)
+    private val fresh = BooleanArray(size)
     private var next = 0
 
     /** Records one frame; a `null` target for frames without a clear pitch. */
-    fun push(target: Target?, offsetCents: Double = 0.0) {
+    fun push(target: Target?, offsetCents: Double = 0.0, fresh: Boolean = false) {
         targets[next] = target
         cents[next] = offsetCents
+        this.fresh[next] = fresh
         next = (next + 1) % size
     }
 
@@ -41,6 +47,6 @@ class StabilityWindow(frames: Int, private val maxSpreadCents: Double) {
             sum += cents[i]
         }
         if (high - low > maxSpreadCents) return null
-        return Consensus(first, sum / size)
+        return Consensus(first, sum / size, fresh.any { it })
     }
 }

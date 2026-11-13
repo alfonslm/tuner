@@ -20,11 +20,14 @@ class RingBuffer(val capacity: Int) {
         length = min(capacity, length + count - start)
     }
 
-    /** Copies the newest `out.size` samples (oldest first). Returns false if not enough have arrived yet. */
-    fun copyLatest(out: FloatArray): Boolean {
+    /**
+     * Copies `out.size` samples (oldest first) ending [ago] samples before the
+     * newest. Returns false if that reaches further back than what is held.
+     */
+    fun copyLatest(out: FloatArray, ago: Int = 0): Boolean {
         val count = out.size
-        if (count > length) return false
-        var index = writeIndex - count
+        if (count + ago > length) return false
+        var index = (writeIndex - count - ago) % capacity
         if (index < 0) index += capacity
         val firstPart = min(count, capacity - index)
         data.copyInto(out, 0, index, index + firstPart)
