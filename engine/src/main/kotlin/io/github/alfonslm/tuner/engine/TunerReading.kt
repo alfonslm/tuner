@@ -61,6 +61,13 @@ data class TunerReading(
     /** Smoothed pitch and its offset from [target]; `null` when not [voiced]. */
     val frequency: Double?,
     val cents: Double?,
+    /**
+     * How much the estimates behind [cents] scatter, as a standard deviation in
+     * cents: what the smoothing is hiding. Small on a clean note; large in
+     * noise, on a note that is dying away, or when something else is sounding
+     * next to it. `null` until a note has given enough readings to tell.
+     */
+    val spreadCents: Double? = null,
     /** 0..1 */
     val confidence: Double,
     /** Within tolerance, and has been for a moment. */

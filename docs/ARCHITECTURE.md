@@ -375,6 +375,15 @@ any zone narrow enough to be useful, and it followed a moving pitch only a
 little better (6 cents behind where the plain average is 8), for four more
 settings. The plain average stayed.
 
+What the average hides is shown next to it. `TunerReading.spreadCents` is the
+standard deviation of the estimates over the last 400 ms, measured on how far
+each lands from the needle, less the recent mean of that distance (so a peg
+being turned, with the needle steadily behind, adds little: under 2 cents at
+30 cents a second). The meter draws it as a band behind the needle, two
+standard deviations either side. On a clean note it is hidden by the needle;
+in noise, on a dying note or against a beating overtone it is several cents
+wide and says how far the needle can be trusted.
+
 Nothing is shown for 150 ms after a pluck is noticed. The attack is noise and
 a moment of wildly sharp pitch, and the analysis windows still hold part of
 the sound from before; the previous reading stays on screen meanwhile.
@@ -522,6 +531,7 @@ ones that shape behaviour:
 | `wide.peakPickRatio` | 0.65 | how readily a shorter period is preferred |
 | `fresh.memoryMs` / `fadeMs` / `onsetRise` | 500 / 1500 / 0.25 | hearing a plucked string apart from ringing ones |
 | `display.smoothingMs` | 200 | time constant of the needle's moving average; longer is steadier and trails a turning peg further. Set from the Needle response setting (100 / 200 / 400) |
+| `display.spreadMs` | 400 | time over which the scatter shown behind the needle is measured |
 | `display.attackHoldMs` | 150 | nothing is shown for this long after a pluck |
 | `display.inTuneCents` / `inTuneHoldMs` | 3 / 400 | when the display turns green |
 
@@ -533,7 +543,7 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
 
 `./gradlew test` needs no device. It runs:
 
-- **66 engine tests** against a plucked-string synthesizer (inharmonic
+- **67 engine tests** against a plucked-string synthesizer (inharmonic
   partials with individual decay, weak fundamental, white noise, mains hum):
   - each guitar string is identified, locked within 0.5 s of the pluck, and
     read to within 0.3 cent;

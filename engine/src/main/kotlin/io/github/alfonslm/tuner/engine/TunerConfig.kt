@@ -142,6 +142,8 @@ data class DisplayConfig(
      * this long.
      */
     val smoothingMs: Double = 200.0,
+    /** Time over which the scatter of the estimates around the needle is measured. */
+    val spreadMs: Double = 400.0,
     /**
      * Nothing is shown for this long after a pluck is noticed. The attack is
      * noise and a moment of wildly sharp pitch; the needle is better left where

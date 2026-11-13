@@ -146,7 +146,7 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         samples += block.size
         val time = samples.toDouble() / sampleRate
 
-        if (!ring.copyLatest(wideFrame)) return reading(time, -120.0, null, null, false)
+        if (!ring.copyLatest(wideFrame)) return reading(time, -120.0, null, null, null, false)
 
         // 1. Wide-band analysis: acquisition while searching, watchdog while locked.
         val rms = wideAnalyzer.powerSpectrum(wideFrame, widePower)
@@ -187,10 +187,10 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         // 4. Display smoothing.
         val row = spectrumRow(time, audible, pitch?.target ?: lock?.target)
         val result = if (pitch == null) {
-            reading(time, levelDb, null, null, false, row)
+            reading(time, levelDb, null, null, null, false, row)
         } else {
             val smoothed = smoother.push(pitch.target.id, centsBetween(pitch.frequency, pitch.target.frequency), time)
-            reading(time, levelDb, pitch, smoothed.cents, smoothed.inTune, row)
+            reading(time, levelDb, pitch, smoothed.cents, smoothed.spreadCents, smoothed.inTune, row)
         }
 
         // 5. Automatic mode: every settled note is a clue to which instrument this is.
@@ -465,6 +465,7 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         levelDb: Double,
         pitch: Pitch?,
         cents: Double?,
+        spreadCents: Double?,
         inTune: Boolean,
         spectrum: SpectrumRow? = null,
     ): TunerReading {
@@ -479,6 +480,7 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
             target = pitch?.target ?: lock?.target,
             frequency = if (pitch != null && cents != null) pitch.target.frequency * centsToRatio(cents) else null,
             cents = cents,
+            spreadCents = spreadCents,
             confidence = pitch?.confidence ?: 0.0,
             inTune = inTune,
             lock = lock?.let { LockInfo(it.target, it.pinned, it.widthCents) },

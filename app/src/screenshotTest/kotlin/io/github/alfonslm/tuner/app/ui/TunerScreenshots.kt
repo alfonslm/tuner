@@ -48,6 +48,7 @@ private fun reading(
     widthCents: Double = 35.0,
     inTune: Boolean = false,
     instrumentId: String = "guitar",
+    spreadCents: Double? = 0.3,
 ) = TunerReading(
     time = 10.0,
     delay = if (cents != null) 0.115 else 0.0,
@@ -58,6 +59,7 @@ private fun reading(
     target = target,
     frequency = cents?.let { target.frequency * centsToRatio(it) },
     cents = cents,
+    spreadCents = spreadCents.takeIf { cents != null },
     confidence = 0.95,
     inTune = inTune,
     lock = if (locked) LockInfo(target, pinned, widthCents) else null,
@@ -138,7 +140,7 @@ fun Idle() = Screen(config = TunerConfig(), running = false)
 @PhonePreview
 @Composable
 fun SearchingWideBand() = Screen(trace = trace { age -> (-22.0 + 3 * kotlin.math.sin(age * 9)).takeIf { age < 0.4 } }) {
-    val wide = reading(it[1], cents = -22.0, source = PitchSource.WIDE, locked = false)
+    val wide = reading(it[1], cents = -22.0, source = PitchSource.WIDE, locked = false, spreadCents = 4.0)
     wide to wide
 }
 
@@ -158,7 +160,7 @@ fun LockedSharp() = Screen(
         }
     },
 ) {
-    val focused = reading(it[1], cents = 14.0, widthCents = 49.0)
+    val focused = reading(it[1], cents = 14.0, widthCents = 49.0, spreadCents = 1.8)
     focused to focused
 }
 

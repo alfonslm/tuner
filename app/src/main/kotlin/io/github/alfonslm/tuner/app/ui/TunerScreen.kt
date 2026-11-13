@@ -300,6 +300,7 @@ private fun Display(state: TunerUiState, modifier: Modifier = Modifier) {
             Column(Modifier.weight(1f)) {
                 Meter(
                     cents = cents?.toFloat(),
+                    spreadCents = shown?.spreadCents?.toFloat(),
                     tone = tone,
                     inTuneCents = state.config.display.inTuneCents.toFloat(),
                     dimmed = !state.live,

@@ -24,6 +24,9 @@ import androidx.compose.ui.unit.dp
 /** Cents shown from the centre to either end of the scale. */
 const val METER_RANGE_CENTS = 50f
 
+/** The band behind the needle reaches this many standard deviations either side. */
+private const val SPREAD_DEVIATIONS = 2f
+
 /** Space left at either end of the scale; the waterfall below uses the same so the two line up. */
 val METER_INSET = 2.dp
 
@@ -31,15 +34,25 @@ val METER_INSET = 2.dp
  * A linear cents scale with a moving needle. The green zone marks the in-tune
  * tolerance; readings beyond the scale rest against its end.
  *
+ * Behind the needle a band shows how much the estimates it averages scatter:
+ * two standard deviations either side, which is where nearly all of them
+ * fall. On a clean note it disappears behind the needle.
+ *
  * @param cents offset to show, or `null` to park the needle in the middle
+ * @param spreadCents standard deviation of the estimates behind [cents], if known
  * @param dimmed true for a held reading (the note has stopped)
  */
 @Composable
-fun Meter(cents: Float?, tone: Color, inTuneCents: Float, dimmed: Boolean, modifier: Modifier = Modifier) {
+fun Meter(cents: Float?, spreadCents: Float?, tone: Color, inTuneCents: Float, dimmed: Boolean, modifier: Modifier = Modifier) {
     val position by animateFloatAsState(
         targetValue = ((cents ?: 0f) / METER_RANGE_CENTS).coerceIn(-1f, 1f),
         animationSpec = tween(durationMillis = 80),
         label = "needle",
+    )
+    val spread by animateFloatAsState(
+        targetValue = if (cents == null) 0f else (SPREAD_DEVIATIONS * (spreadCents ?: 0f) / METER_RANGE_CENTS).coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 200),
+        label = "spread",
     )
     val needleAlpha by animateFloatAsState(if (dimmed) 0.35f else 1f, label = "needleAlpha")
 
@@ -76,6 +89,18 @@ fun Meter(cents: Float?, tone: Color, inTuneCents: Float, dimmed: Boolean, modif
                 val tickHalf = (if (step % 5 == 0) 10.dp else 5.dp).toPx()
                 val tickX = x(step / 10f)
                 drawLine(TunerColors.Line, Offset(tickX, centreY - tickHalf), Offset(tickX, centreY + tickHalf), strokeWidth = 1.dp.toPx())
+            }
+
+            // Scatter of the estimates, kept within the scale.
+            val left = x((position - spread).coerceAtLeast(-1f))
+            val right = x((position + spread).coerceAtMost(1f))
+            if (right - left > 4.dp.toPx()) {
+                drawRoundRect(
+                    color = tone.copy(alpha = 0.30f * needleAlpha),
+                    topLeft = Offset(left, 4.dp.toPx()),
+                    size = Size(right - left, size.height - 8.dp.toPx()),
+                    cornerRadius = CornerRadius(4.dp.toPx()),
+                )
             }
 
             drawLine(

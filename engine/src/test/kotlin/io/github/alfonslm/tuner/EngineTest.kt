@@ -135,8 +135,34 @@ class EngineTest {
         val raw = swing(guitar.copy(display = guitar.display.copy(smoothingMs = 0.0)))
         // ...and what the needle does.
         val steadied = swing(guitar)
+        // The spread reports what the needle is hiding.
+        assertTrue(run(engine(), signal).between(0.8, 2.8).map { it.spreadCents!! }.average() > 2)
         assertTrue(raw > 7, "estimate swings by $raw")
         assertTrue(steadied < 0.6 * raw, "needle swings by $steadied, estimate by $raw")
+    }
+
+    @Test
+    fun `reports how much the estimates scatter, and a moving pitch adds little`() {
+        // A clean note: nothing to report.
+        val clean = run(engine(), pluckedString(2.0, detune(A2, -8.0)))
+        assertTrue(clean.between(0.0, 2.0).filter { it.voiced }.take(3).all { it.spreadCents == null })
+        assertTrue(clean.between(1.0, 2.0).all { it.spreadCents!! < 0.3 }, "clean ${clean.between(1.0, 2.0).maxOf { it.spreadCents!! }}")
+
+        // The same note, quiet in noise: the estimates scatter, the needle hides it, the spread says so.
+        val noisy = run(engine(), mix(whiteNoise(2.0, 0.02), pluckedString(2.0, detune(A2, -8.0), amplitude = 0.05)))
+        val spread = noisy.between(1.0, 2.0).map { it.spreadCents!! }
+        assertTrue(spread.average() > 2, "noisy $spread")
+
+        // A peg turned at 30 cents a second: the needle trails by 8 cents, the spread shows under 2.
+        val signal = FloatArray(3 * SAMPLE_RATE)
+        var phase = 0.0
+        for (i in signal.indices) {
+            val t = i.toDouble() / SAMPLE_RATE
+            phase += 2 * PI * detune(A2, -30 + 30 * (t - 1).coerceIn(0.0, 1.0)) / SAMPLE_RATE
+            signal[i] = (0.2 * (sin(phase) + 0.5 * sin(2 * phase) + 0.3 * sin(3 * phase))).toFloat()
+        }
+        val moving = run(engine(), signal).between(1.0, 2.5)
+        assertTrue(moving.all { it.spreadCents!! < 2.0 }, "moving ${moving.map { it.spreadCents }}")
     }
 
     @Test
