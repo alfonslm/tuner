@@ -92,6 +92,7 @@ engine/src/main/kotlin/io/github/alfonslm/tuner/
   music/
     Notes.kt                Hz ↔ MIDI ↔ names, cents
     Instruments.kt          presets: strings + harmonic model per instrument
+    InstrumentIdentifier.kt automatic mode: which instrument do these strings belong to?
     Targets.kt              TargetSet: the notes the tuner snaps to
 engine/src/test/            synthetic plucked strings, DSP and engine scenarios
 
@@ -268,9 +269,44 @@ hand-off when a string is tuned past the midpoint, so the target never flaps.
 | Smart filter switch | `smartFilter: AUTO \| OFF` | `AUTO` (default) switches as described. `OFF` stays wide-band always. |
 | Tap a string | `pinnedTargetId` | Forces the lock onto that string with a ±400-cent capture range and ignores every other note. For strings that are far off (new strings) or noisy rooms. Tap again to release. |
 
+| Instrument: Automatic | `instrumentId: "auto"` | The default. Works out the instrument from the strings played; see below. |
+
 Every `TunerReading` carries `mode`, `source` (`WIDE` / `FOCUSED`) and the
 lock's target and comb width, so the UI can show exactly what the filter is
 doing.
+
+### Recognising the instrument
+
+The default instrument is **Automatic**: the player should not have to say
+what they are holding, because the strings give it away.
+
+One string says little — G3 is on a guitar, a violin and a viola. Two
+different strings almost always settle it, because instruments differ both in
+register and in the interval between neighbouring strings (fourths on a guitar
+or bass, fifths in the violin family).
+
+1. Until the instrument is known, the engine behaves as a chromatic tuner
+   whose range spans every instrument (E1 to C6). It is fully usable in this
+   state: notes are shown and locked onto as semitones.
+2. Each time a note settles (the same trigger that engages the lock), its
+   pitch goes to `InstrumentIdentifier`. That keeps the two most recent
+   *distinct* pitches and asks of every preset: could these be two different
+   strings of yours, each within 150 cents of where it belongs? The fit is the
+   RMS distance in cents.
+3. If exactly one instrument fits, or the best fits at least 40 cents better
+   than the runner-up, it is chosen. The engine rebuilds itself around that
+   instrument's strings and harmonic model, and the lock carries over to the
+   string that is still sounding. `TunerReading.instrumentId` reports the
+   change; the UI shows the instrument and its string buttons appear.
+
+From then on the tuner has what chromatic mode lacks: it knows a D string a
+whole tone flat is a flat D string, not an in-tune C.
+
+It is deliberately reluctant. A pair that fits two instruments stays undecided
+until a string only one of them has is played (violin and viola share G3, D4
+and A4). Only the last two pitches count, so one misheard note is forgotten as
+soon as two good ones follow. A choice, once made, holds until the tuner is
+stopped or the user picks an instrument; picking Automatic again starts over.
 
 ## 6. Tunables
 
@@ -295,7 +331,7 @@ an alternate tuning is one entry (string notes + harmonic model).
 
 `./gradlew test` needs no device. It runs:
 
-- **28 engine tests** against a plucked-string synthesizer (inharmonic
+- **43 engine tests** against a plucked-string synthesizer (inharmonic
   partials with individual decay, weak fundamental, white noise, mains hum):
   - each guitar string is identified, locked within 0.5 s of the pluck, and
     read to within 0.3 cent;
@@ -306,15 +342,21 @@ an alternate tuning is one entry (string notes + harmonic model).
   - noise and silence never produce a reading; every other string of the
     instrument is rejected even with the comb fully open;
   - E2 ↔ E4, string changes, chromatic hand-off through a semitone, hold and
-    release, and pinning behave as described above.
-- **5 app tests** that drive the real pipeline (view model → flow → engine)
+    release, and pinning behave as described above;
+  - automatic mode: every pair of strings of every preset identifies its
+    instrument (or stays undecided where two instruments share the pair), and
+    the engine recognises guitar, bass, ukulele, violin, viola and cello from
+    two plucked strings (a guitar within half a second of the second pluck).
+- **6 app tests** that drive the real pipeline (view model → flow → engine)
   with a synthetic microphone: a tone gets locked and shown, stopping closes
   the stream, a microphone that fails to open is reported, settings changes
-  reach the running engine, settings persist.
+  reach the running engine, settings persist, and automatic mode recognises a
+  guitar and offers its strings.
 
 `./gradlew :app:validateDebugScreenshotTest` renders the Compose screen on
-the JVM in eight states (idle, searching, locked sharp, in tune, held reading,
-pinned, chromatic with the filter off, permission denied) and compares them
+the JVM in eleven states (idle, searching, locked sharp, in tune, held
+reading, pinned, chromatic with the filter off, permission denied, and three
+of automatic mode) and compares them
 with the reference images in `app/src/screenshotTestDebug/reference`. After an
 intentional UI change, regenerate them with `:app:updateDebugScreenshotTest`.
 
@@ -336,7 +378,15 @@ been through the engine yet.
   out instead.
 - **Inharmonicity is assumed, not measured.** Fitting `B` per string from the
   observed partials would remove the remaining ≈0.5 cent bias.
-- **Chromatic mode starts at C2**; basses should use the bass preset, which
-  sizes the analysis windows for E1.
+- **Automatic mode knows standard tunings only.** An instrument tuned a full
+  semitone away from standard is ambiguous by pitch alone (E♭2 and A♭2 fit a
+  bass's D2 and G2 as well as a guitar's E2 and A2), so it is left undecided
+  and the tuner simply stays chromatic. Alternate tunings would be added as
+  presets and become candidates automatically.
+- **Automatic mode reacts a little later to the first string** than a fixed
+  instrument does: until it knows the instrument it has to analyse windows
+  long enough for a bass.
+- **Chromatic mode starts at C2**; for a bass use Automatic or the bass
+  preset, which size the analysis windows for E1.
 - Natural follow-ups: alternate tunings, a strobe-style display driven by
   per-partial phase, release signing and a Play Store listing.

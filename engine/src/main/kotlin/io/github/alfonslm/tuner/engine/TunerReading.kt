@@ -24,6 +24,12 @@ data class LockInfo(
 data class TunerReading(
     /** Stream time in seconds. */
     val time: Double,
+    /**
+     * The instrument whose strings are the current targets. Equal to the
+     * configured one, except in automatic mode: there it is the automatic preset
+     * until the instrument has been identified, and the identified one after.
+     */
+    val instrumentId: String,
     val mode: TunerMode,
     val levelDb: Double,
     /** Which detector the pitch came from; `null` when this frame produced no pitch. */

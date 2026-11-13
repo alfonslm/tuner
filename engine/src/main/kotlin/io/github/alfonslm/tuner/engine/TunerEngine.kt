@@ -8,6 +8,8 @@ import io.github.alfonslm.tuner.dsp.PitchEstimate
 import io.github.alfonslm.tuner.dsp.SpectralAnalyzer
 import io.github.alfonslm.tuner.dsp.WideDetector
 import io.github.alfonslm.tuner.dsp.nextPowerOfTwo
+import io.github.alfonslm.tuner.music.AUTO_INSTRUMENT_ID
+import io.github.alfonslm.tuner.music.InstrumentIdentifier
 import io.github.alfonslm.tuner.music.InstrumentPreset
 import io.github.alfonslm.tuner.music.Target
 import io.github.alfonslm.tuner.music.TargetSet
@@ -35,6 +37,10 @@ import kotlin.math.roundToInt
  *     focused detector (harmonic comb around the target) produces the reading
  *     and the wide detector only acts as a watchdog for a change of string;
  *  4. the reading is smoothed for display.
+ *
+ * With the automatic instrument, the engine starts out chromatic over the range
+ * of all instruments and passes every settled note to an [InstrumentIdentifier];
+ * once that names an instrument, its strings become the targets.
  *
  * @param blockSize samples per [process] call; only used to convert time constants into frames
  */
@@ -76,12 +82,21 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
     private var lock: Lock? = null
     private var samples = 0L
 
+    /** Automatic mode: the instrument recognised from the strings heard so far. */
+    private val identifier = InstrumentIdentifier()
+    private var identified: InstrumentPreset? = null
+
     init {
         rebuild()
     }
 
-    /** Replaces the configuration. The current lock is dropped; audio history is kept. */
+    /**
+     * Replaces the configuration. The current lock is dropped; audio history is
+     * kept, and so is an automatically identified instrument unless the
+     * configured instrument changed.
+     */
     fun configure(config: TunerConfig) {
+        if (config.instrumentId != this.config.instrumentId) forgetInstrument()
         this.config = config
         rebuild()
     }
@@ -89,7 +104,13 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
     /** Forgets all audio and state, e.g. when the microphone is restarted. */
     fun reset() {
         samples = 0
+        forgetInstrument()
         rebuild()
+    }
+
+    private fun forgetInstrument() {
+        identified = null
+        identifier.reset()
     }
 
     fun process(block: FloatArray): TunerReading {
@@ -128,9 +149,29 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         adaptComb(pitch)
 
         // 4. Display smoothing.
-        if (pitch == null) return reading(time, levelDb, null, null, false)
-        val smoothed = smoother.push(pitch.target.id, centsBetween(pitch.frequency, pitch.target.frequency), time)
-        return reading(time, levelDb, pitch, smoothed.cents, smoothed.inTune)
+        val result = if (pitch == null) {
+            reading(time, levelDb, null, null, false)
+        } else {
+            val smoothed = smoother.push(pitch.target.id, centsBetween(pitch.frequency, pitch.target.frequency), time)
+            reading(time, levelDb, pitch, smoothed.cents, smoothed.inTune)
+        }
+
+        // 5. Automatic mode: every settled note is a clue to which instrument this is.
+        if (settled != null && identified == null && config.instrumentId == AUTO_INSTRUMENT_ID) {
+            identify(settled.target.frequency * centsToRatio(settled.cents), time)
+        }
+        return result
+    }
+
+    /** Switches to an instrument's own strings once the notes heard so far single one out. */
+    private fun identify(frequency: Double, time: Double) {
+        identified = identifier.observe(frequency, config.a4) ?: return
+        rebuild()
+        // The note that settled it is still sounding: carry the lock over to the string it belongs to.
+        if (config.smartFilter == SmartFilterMode.AUTO && lock == null) {
+            val string = targets.nearest(frequency)
+            engage(string, centsBetween(frequency, string.frequency), pinned = false, time)
+        }
     }
 
     /** Locked mode: trust the focused detector, use the wide one to notice that the player moved on. */
@@ -241,7 +282,7 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
     }
 
     private fun rebuild() {
-        preset = instrumentById(config.instrumentId)
+        preset = identified ?: instrumentById(config.instrumentId)
         targets = createTargetSet(
             preset,
             config.a4,
@@ -290,6 +331,7 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         val lock = lock
         return TunerReading(
             time = time,
+            instrumentId = preset.id,
             mode = if (lock != null) TunerMode.LOCKED else TunerMode.SEARCH,
             levelDb = levelDb,
             source = pitch?.source,

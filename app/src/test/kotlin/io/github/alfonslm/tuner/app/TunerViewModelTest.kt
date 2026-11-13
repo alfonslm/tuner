@@ -5,7 +5,6 @@ import io.github.alfonslm.tuner.app.audio.AudioStream
 import io.github.alfonslm.tuner.engine.PitchSource
 import io.github.alfonslm.tuner.engine.SmartFilterMode
 import java.io.IOException
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -55,32 +54,41 @@ class TunerViewModelTest {
         }
     }
 
-    /** A string-like tone that never ends, delivered slightly faster than real time. */
-    private class ToneSource(private val frequency: Double) : AudioSource {
+    /**
+     * String-like tones delivered slightly faster than real time: each frequency
+     * for [secondsEach], the last one forever. Every open starts from the beginning.
+     */
+    private class ToneSource(private vararg val frequencies: Double, private val secondsEach: Double = 1.0) : AudioSource {
         val opened = AtomicInteger()
-        val closed = CountDownLatch(1)
+        val closed = AtomicInteger()
 
         override fun open(): AudioStream {
             opened.incrementAndGet()
             return object : AudioStream {
                 private var n = 0L
+                private var phase = 0.0
                 override val sampleRate = SAMPLE_RATE
 
                 override fun read(block: FloatArray): Boolean {
                     Thread.sleep(2)
                     for (i in block.indices) {
-                        val phase = 2 * PI * frequency * n++ / SAMPLE_RATE
+                        val index = (n++ / (secondsEach * SAMPLE_RATE)).toInt().coerceAtMost(frequencies.lastIndex)
+                        phase += 2 * PI * frequencies[index] / SAMPLE_RATE
                         block[i] = (0.2 * (sin(phase) + 0.5 * sin(2 * phase) + 0.3 * sin(3 * phase))).toFloat()
                     }
                     return true
                 }
 
-                override fun close() = closed.countDown()
+                override fun close() {
+                    closed.incrementAndGet()
+                }
             }
         }
     }
 
-    private fun viewModel(source: AudioSource, settings: SettingsStore = MemorySettings()) =
+    private val guitar = Settings(instrumentId = "guitar")
+
+    private fun viewModel(source: AudioSource, settings: SettingsStore = MemorySettings(guitar)) =
         TunerViewModel(source, settings, audioDispatcher)
 
     private fun TunerViewModel.await(what: String, predicate: (TunerUiState) -> Boolean): TunerUiState {
@@ -113,7 +121,7 @@ class TunerViewModelTest {
 
         viewModel.stop()
 
-        assertTrue(source.closed.await(2, TimeUnit.SECONDS), "stream was not closed")
+        viewModel.await("stream closed") { source.closed.get() == 1 }
         assertEquals(1, source.opened.get())
         with(viewModel.state.value) {
             assertTrue(!running)
@@ -145,6 +153,45 @@ class TunerViewModelTest {
         viewModel.togglePin(d3.id)
         viewModel.await("pinned to D3, A2 ignored") { it.latest?.lock?.pinned == true && it.latest.lock?.target?.label == "D3" && !it.live }
         viewModel.stop()
+    }
+
+    @Test
+    fun `automatic mode recognises the instrument from two strings and offers its strings`() {
+        val e2 = 82.41
+        val source = ToneSource(e2, A2)
+        val viewModel = viewModel(source, MemorySettings())
+        assertEquals("auto", viewModel.state.value.config.instrumentId)
+        assertTrue(viewModel.state.value.strings.isEmpty())
+
+        viewModel.start()
+        // One string: tuned chromatically, instrument still unknown.
+        val first = viewModel.await("first string") { it.shown?.target?.label == "E2" }
+        assertNull(first.detectedInstrument)
+        assertTrue(first.strings.isEmpty())
+
+        val known = viewModel.await("guitar recognised") { it.detectedInstrument != null && it.shown?.target?.id == "s1:A2" }
+        assertEquals("guitar", known.detectedInstrument!!.id)
+        assertEquals(listOf("E2", "A2", "D3", "G3", "B3", "E4"), known.strings.map { it.label })
+        assertEquals("auto", known.config.instrumentId) // the setting itself stays on Automatic
+
+        // The recognised instrument's strings can be pinned like any other.
+        viewModel.togglePin("s2:D3")
+        viewModel.await("pinned to D3") { it.latest?.lock?.pinned == true && it.detectedInstrument?.id == "guitar" }
+
+        // Choosing Automatic again starts over: new session, nothing recognised, no pin.
+        viewModel.setInstrument("auto")
+        with(viewModel.state.value) {
+            assertTrue(running)
+            assertNull(detectedInstrument)
+            assertNull(config.pinnedTargetId)
+            assertTrue(strings.isEmpty())
+        }
+        viewModel.await("recognised again") { it.detectedInstrument?.id == "guitar" }
+        assertEquals(2, source.opened.get())
+
+        viewModel.stop()
+        assertNull(viewModel.state.value.detectedInstrument)
+        assertTrue(viewModel.state.value.strings.isEmpty())
     }
 
     @Test

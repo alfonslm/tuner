@@ -23,8 +23,10 @@ import io.github.alfonslm.tuner.music.instrumentById
 
 private val NoActions = TunerActions({}, {}, {}, {}, {})
 
-private fun strings(config: TunerConfig): List<Target> =
-    createTargetSet(instrumentById(config.instrumentId), config.a4, TargetSetOptions(300.0, 30.0, 300.0)).list.orEmpty()
+private val Guitar = TunerConfig(instrumentId = "guitar")
+
+private fun strings(instrumentId: String, a4: Double): List<Target> =
+    createTargetSet(instrumentById(instrumentId), a4, TargetSetOptions(300.0, 30.0, 300.0)).list.orEmpty()
 
 private fun reading(
     target: Target,
@@ -34,8 +36,10 @@ private fun reading(
     pinned: Boolean = false,
     widthCents: Double = 35.0,
     inTune: Boolean = false,
+    instrumentId: String = "guitar",
 ) = TunerReading(
     time = 10.0,
+    instrumentId = instrumentId,
     mode = if (locked) TunerMode.LOCKED else TunerMode.SEARCH,
     levelDb = -30.0,
     source = source.takeIf { cents != null },
@@ -49,15 +53,25 @@ private fun reading(
 
 @Composable
 private fun Screen(
-    config: TunerConfig = TunerConfig(),
+    config: TunerConfig = Guitar,
     running: Boolean = true,
     error: TunerError? = null,
+    detected: String? = null,
     readings: (List<Target>) -> Pair<TunerReading?, TunerReading?> = { null to null },
 ) {
-    val strings = strings(config)
+    val strings = strings(detected ?: config.instrumentId, config.a4)
     val (latest, shown) = readings(strings)
+    val state = TunerUiState(
+        config = config,
+        detectedInstrument = detected?.let(::instrumentById),
+        strings = strings,
+        running = running,
+        error = error,
+        latest = latest,
+        shown = shown,
+    )
     TunerTheme {
-        TunerScreen(TunerUiState(config, strings = strings, running = running, error = error, latest = latest, shown = shown), NoActions)
+        TunerScreen(state, NoActions)
     }
 }
 
@@ -68,7 +82,7 @@ private annotation class PhonePreview
 @PreviewTest
 @PhonePreview
 @Composable
-fun Idle() = Screen(running = false)
+fun Idle() = Screen(config = TunerConfig(), running = false)
 
 @PreviewTest
 @PhonePreview
@@ -104,7 +118,7 @@ fun LockedFarFlatHeldAfterNoteStopped() = Screen {
 @PreviewTest
 @PhonePreview
 @Composable
-fun PinnedWaitingForString() = Screen(config = TunerConfig(pinnedTargetId = "s2:D3")) {
+fun PinnedWaitingForString() = Screen(config = Guitar.copy(pinnedTargetId = "s2:D3")) {
     reading(it[2], cents = null, pinned = true, widthCents = 400.0) to null
 }
 
@@ -120,4 +134,26 @@ fun ChromaticFilterOff() = Screen(config = TunerConfig(instrumentId = "chromatic
 @PreviewTest
 @PhonePreview
 @Composable
-fun MicrophoneDenied() = Screen(running = false, error = TunerError.PERMISSION_DENIED)
+fun AutomaticListening() = Screen(config = TunerConfig())
+
+@PreviewTest
+@PhonePreview
+@Composable
+fun AutomaticFirstStringChromatic() = Screen(config = TunerConfig()) {
+    val target = Target("m40", "E2", 40, 82.41)
+    val focused = reading(target, cents = -15.0, widthCents = 50.0, instrumentId = "auto")
+    focused to focused
+}
+
+@PreviewTest
+@PhonePreview
+@Composable
+fun AutomaticIdentifiedUkulele() = Screen(config = TunerConfig(), detected = "ukulele") {
+    val focused = reading(it[2], cents = 6.0, widthCents = 41.0, instrumentId = "ukulele")
+    focused to focused
+}
+
+@PreviewTest
+@PhonePreview
+@Composable
+fun MicrophoneDenied() = Screen(config = TunerConfig(), running = false, error = TunerError.PERMISSION_DENIED)

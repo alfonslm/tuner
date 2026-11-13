@@ -3,6 +3,7 @@
     <string name="app_name">Tuner</string>
 
     <string name="instrument">Instrument</string>
+    <string name="instrument_auto">Instrument · auto</string>
     <string name="reference_pitch">A4</string>
     <string name="reference_lower">Lower reference pitch</string>
     <string name="reference_raise">Raise reference pitch</string>
@@ -17,6 +18,7 @@
 
     <string name="mode_idle">Tap start and pluck a string</string>
     <string name="mode_listening">Listening…</string>
+    <string name="mode_listening_auto">Listening… play two strings to identify the instrument</string>
     <string name="mode_wide_waiting">Wide-band · waiting for a steady note</string>
     <string name="mode_wide_filter_off">Wide-band · smart filter off</string>
     <string name="mode_locked">Locked on %1$s</string>

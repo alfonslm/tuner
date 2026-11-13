@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -50,6 +51,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.alfonslm.tuner.app.R
@@ -58,6 +60,7 @@ import io.github.alfonslm.tuner.app.TunerUiState
 import io.github.alfonslm.tuner.engine.PitchSource
 import io.github.alfonslm.tuner.engine.SmartFilterMode
 import io.github.alfonslm.tuner.engine.TunerReading
+import io.github.alfonslm.tuner.music.AUTO_INSTRUMENT_ID
 import io.github.alfonslm.tuner.music.InstrumentPreset
 import io.github.alfonslm.tuner.music.Target
 import java.util.Locale
@@ -132,8 +135,14 @@ private fun activeTarget(state: TunerUiState): Target? = state.shown?.target ?: 
 @Composable
 private fun SettingsBar(state: TunerUiState, actions: TunerActions) {
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Bottom) {
-        Labelled(stringResource(R.string.instrument), Modifier.weight(1f)) {
-            InstrumentPicker(state.instruments, state.config.instrumentId, actions.onInstrument)
+        // In automatic mode the picker shows what was recognised, and the label says who chose it.
+        val detected = state.detectedInstrument
+        Labelled(stringResource(if (detected != null) R.string.instrument_auto else R.string.instrument), Modifier.weight(1f)) {
+            InstrumentPicker(
+                label = (detected ?: state.instruments.firstOrNull { it.id == state.config.instrumentId })?.name.orEmpty(),
+                instruments = state.instruments,
+                onSelect = actions.onInstrument,
+            )
         }
         Labelled(stringResource(R.string.reference_pitch)) {
             ReferencePitchStepper(state.config.a4, actions.onReferencePitch)
@@ -160,7 +169,7 @@ private fun Labelled(label: String, modifier: Modifier = Modifier, content: @Com
 }
 
 @Composable
-private fun InstrumentPicker(instruments: List<InstrumentPreset>, selectedId: String, onSelect: (String) -> Unit) {
+private fun InstrumentPicker(label: String, instruments: List<InstrumentPreset>, onSelect: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Box {
         OutlinedButton(
@@ -169,12 +178,15 @@ private fun InstrumentPicker(instruments: List<InstrumentPreset>, selectedId: St
                 .fillMaxWidth()
                 .height(48.dp),
             shape = RoundedCornerShape(10.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp),
             colors = ButtonDefaults.outlinedButtonColors(containerColor = TunerColors.Panel, contentColor = TunerColors.Text),
         ) {
             Text(
-                instruments.firstOrNull { it.id == selectedId }?.name.orEmpty(),
+                label,
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Text("▾", color = TunerColors.Muted)
         }
@@ -313,7 +325,13 @@ private fun ModeLine(state: TunerUiState) {
             }
             TunerColors.Accent to "$name · $detail"
         }
-        !state.live -> TunerColors.Warn to stringResource(R.string.mode_listening)
+        !state.live -> TunerColors.Warn to stringResource(
+            if (state.config.instrumentId == AUTO_INSTRUMENT_ID && state.detectedInstrument == null) {
+                R.string.mode_listening_auto
+            } else {
+                R.string.mode_listening
+            },
+        )
         state.config.smartFilter == SmartFilterMode.AUTO -> TunerColors.Warn to stringResource(R.string.mode_wide_waiting)
         else -> TunerColors.Warn to stringResource(R.string.mode_wide_filter_off)
     }
@@ -328,7 +346,7 @@ private fun ModeLine(state: TunerUiState) {
                 .background(dot, CircleShape),
         )
         Spacer(Modifier.width(8.dp))
-        Text(text, style = MaterialTheme.typography.bodySmall, color = TunerColors.Muted)
+        Text(text, style = MaterialTheme.typography.bodySmall, color = TunerColors.Muted, textAlign = TextAlign.Center)
     }
 }
 

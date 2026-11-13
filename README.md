@@ -34,7 +34,10 @@ Requires Android 8.0 (API 26) or newer.
 
 ## Use
 
-1. Pick the instrument, tap **Start tuner**, allow the microphone, pluck a string.
+1. Tap **Start tuner**, allow the microphone, and pluck a string. With the
+   instrument on **Automatic** (the default) the tuner starts out chromatic
+   and recognises the instrument once it has heard two different strings; you
+   can also pick the instrument yourself.
 2. The tuner shows the note wide-band, then locks ("Locked on A2 · harmonic
    filter ±35¢") once the note is steady. Pluck another string and it follows.
 3. Tap a string button to pin the tuner to it (useful for a string that is far

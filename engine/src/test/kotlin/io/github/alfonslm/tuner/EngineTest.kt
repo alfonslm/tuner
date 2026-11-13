@@ -22,7 +22,9 @@ private const val G3 = 196.0
 private const val E4 = 329.63
 
 class EngineTest {
-    private fun engine(config: TunerConfig = TunerConfig()) = TunerEngine(SAMPLE_RATE, BLOCK, config)
+    private val guitar = TunerConfig(instrumentId = "guitar")
+
+    private fun engine(config: TunerConfig = guitar) = TunerEngine(SAMPLE_RATE, BLOCK, config)
 
     /** Feeds a signal through the engine block by block, as the microphone thread would. */
     private fun run(engine: TunerEngine, signal: FloatArray): List<TunerReading> =
@@ -70,7 +72,7 @@ class EngineTest {
 
     @Test
     fun `stays wide-band when the smart filter is switched off`() {
-        val readings = run(engine(TunerConfig(smartFilter = SmartFilterMode.OFF)), pluckedString(1.0, A2))
+        val readings = run(engine(guitar.copy(smartFilter = SmartFilterMode.OFF)), pluckedString(1.0, A2))
         assertTrue(readings.all { it.mode == TunerMode.SEARCH && it.lock == null })
         assertTrue(readings.between(0.5, 1.0).all { it.source == PitchSource.WIDE && it.target?.label == "A2" })
     }
@@ -133,7 +135,7 @@ class EngineTest {
     @Test
     fun `keeps reading in noise where wide-band detection gives up`() {
         val signal = mix(pluckedString(4.0, detune(G3, -6.0), amplitude = 0.25, decay = 1.2), whiteNoise(4.0, 0.02))
-        fun usable(mode: SmartFilterMode) = run(engine(TunerConfig(smartFilter = mode)), signal)
+        fun usable(mode: SmartFilterMode) = run(engine(guitar.copy(smartFilter = mode)), signal)
             .between(1.5, 4.0)
             .count { it.voiced && abs(it.cents!! + 6) < 3 }
         val withFilter = usable(SmartFilterMode.AUTO)
