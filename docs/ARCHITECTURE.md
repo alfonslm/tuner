@@ -338,9 +338,5 @@ been through the engine yet.
   observed partials would remove the remaining ≈0.5 cent bias.
 - **Chromatic mode starts at C2**; basses should use the bass preset, which
   sizes the analysis windows for E1.
-- **Android only.** The engine is plain Kotlin without JVM-specific APIs
-  beyond `kotlin.math`, so moving it to Kotlin Multiplatform for an iOS app
-  later is mostly a build-file change; the microphone and UI layers would be
-  written per platform.
 - Natural follow-ups: alternate tunings, a strobe-style display driven by
   per-partial phase, release signing and a Play Store listing.
