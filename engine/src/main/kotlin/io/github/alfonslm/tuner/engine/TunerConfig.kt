@@ -127,6 +127,17 @@ data class LockConfig(
      * detector's octave error.
      */
     val minOvertoneSupport: Double = 0.3,
+    /**
+     * ...and only to a string that the overtone is within this many cents of.
+     * (Strings that are each other's overtones, like a guitar's two E strings,
+     * are; the octave of a low string usually is not.)
+     */
+    val overtoneHandoffCents: Double = 60.0,
+    /**
+     * When the comb has lost the string and the wide detector names an overtone
+     * of it, the lock waits this long for the string to come back before moving.
+     */
+    val overtoneWaitMs: Double = 400.0,
     /** Chromatic / neighbouring-string hand-off: the new target must be closer by this much... */
     val handoffHysteresisCents: Double = 10.0,
     /** ...for this many frames in a row. */
@@ -150,6 +161,8 @@ data class DisplayConfig(
      * it was than thrown about by it.
      */
     val attackHoldMs: Double = 150.0,
+    /** A frame this much louder (dB) than the quietest of the three before it is a pluck arriving, and is not shown. */
+    val surgeDb: Double = 10.0,
     /** A gap longer than this restarts smoothing. */
     val resetGapMs: Double = 300.0,
     val inTuneCents: Double = 3.0,

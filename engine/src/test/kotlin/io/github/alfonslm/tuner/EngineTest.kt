@@ -149,6 +149,49 @@ class EngineTest {
     }
 
     @Test
+    fun `stops reading a string that has faded under the strings ringing along`() {
+        // As recorded from a real guitar: the high E is 7 cents flat and dies away in a second;
+        // the low strings, in tune, ring along on its fundamental for much longer. What is left
+        // then is an E that is "in tune", and it is not the string being tuned.
+        val signal = mix(guitarHighE(5.0, offsetCents = -7.0, decay = 0.5), whiteNoise(5.0, 0.0003))
+        val readings = run(engine(), signal).filter { it.voiced }
+        assertTrue(readings.last().time > 1.0, "read until ${readings.last().time}")
+        assertTrue(readings.all { abs(it.cents!! + 6.7) < 1.5 }, "readings from ${readings.minOf { it.cents!! }} to ${readings.maxOf { it.cents!! }}")
+        // ...and it does stop, rather than follow the ringing strings to zero.
+        assertTrue(readings.last().time < 4.0, "still reading at ${readings.last().time}")
+    }
+
+    @Test
+    fun `does not take a low string's octave for another string`() {
+        // A small microphone hears little of a low E's fundamental, and as the note rings on, of
+        // its odd partials. What is left is mostly an E an octave up, two semitones above the D string.
+        val mostlyEven = doubleArrayOf(0.04, 1.0, 0.1, 0.6, 0.06, 0.4, 0.04, 0.25)
+        val signal = mix(
+            pluckedString(5.0, E2, amplitude = 0.2, decay = 0.8),
+            pluckedString(5.0, E2, amplitude = 0.04, partialAmplitudes = mostlyEven, decay = 6.0),
+        )
+        fun targets(config: TunerConfig) = run(engine(config), signal).filter { it.voiced }.map { it.target!!.label }
+        // Judged by the partials alone, it goes to the D string...
+        assertTrue("D3" in targets(guitar.copy(lock = guitar.lock.copy(overtoneHandoffCents = 300.0))))
+        // ...but there is no string where that octave is.
+        val heard = targets(guitar)
+        assertTrue(heard.size > 100 && heard.all { it == "E2" }, "targets ${heard.distinct()}, ${heard.size} readings")
+    }
+
+    @Test
+    fun `shows nothing of a pluck that follows a damped string`() {
+        // The string is stopped with the hand, then plucked again at a new pitch.
+        val signal = mix(
+            whiteNoise(4.4, 0.0005),
+            concat(pluckedString(2.0, detune(G3, -30.0)), silence(0.4), pluckedString(2.0, detune(G3, -8.0), seed = 3)),
+        )
+        val readings = run(engine(), signal)
+        val after = readings.between(2.3, 4.4).filter { it.voiced }
+        assertTrue(after.first().time in 2.5..2.75, "first reading at ${after.first().time}")
+        assertTrue(after.all { abs(it.cents!! + 8) < 1.0 }, "readings after the pluck: ${after.map { it.cents }.take(12)}")
+    }
+
+    @Test
     fun `reports how much the estimates scatter, and a moving pitch adds little`() {
         // A clean note: nothing to report.
         val clean = run(engine(), pluckedString(2.0, detune(A2, -8.0)))
@@ -326,7 +369,9 @@ class EngineTest {
                         at(2.2, 0.8, pluckedString(1.4, detune(E4, 5.0), decay = 3.0)),
                         whiteNoise(2.2, 0.001),
                     )
-                    val heard = run(engine(config), signal).between(1.3, 2.2)
+                    // Half a second after the pluck; a little longer where the ringing string is loud and
+                    // an octave relative, since a low string's own octave must not be taken for a pluck.
+                    val heard = run(engine(config), signal).between(if (name == "B3" || db < -6) 1.3 else 1.6, 2.2)
                     val case = "${config.instrumentId}: E4 over $name at $db dB"
                     assertTrue(heard.all { it.voiced && it.target!!.label == "E4" }, "$case: ${heard.map { it.target?.label }.distinct()}")
                     assertTrue(heard.all { abs(it.cents!! - 5) < 1.5 }, "$case: off by ${heard.maxOf { abs(it.cents!! - 5) }}")

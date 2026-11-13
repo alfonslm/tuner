@@ -75,6 +75,7 @@ fun pluckedString(
  *    both an E4) and ring along at those, at their own, stiffer, pitch.
  *
  * @param lowStringsCents how far the A and low E strings are out of tune
+ * @param decay amplitude decay time of the plucked string's fundamental; the strings ringing along last 4 s
  */
 fun guitarHighE(
     seconds: Double,
@@ -82,6 +83,7 @@ fun guitarHighE(
     inharmonicity: Double = 2e-5,
     lowStringsCents: Double = 0.0,
     sympathetic: Double = 1.0,
+    decay: Double = 2.5,
 ): FloatArray {
     val length = (seconds * SAMPLE_RATE).roundToInt()
     val out = DoubleArray(length)
@@ -98,9 +100,9 @@ fun guitarHighE(
     for (k in 1..10) {
         val f = k * f0 * sqrt(1 + inharmonicity * k * k)
         val a = abs(sin(k * PI * 0.15)) / k
-        val decay = 2.5 / (1 + 0.25 * (k - 1))
-        add(f, a, 0.0, decay)
-        add(f + 0.3 + 0.5 * random.next(), a * (0.3 + 0.4 * random.next()), 0.0, decay * 1.4)
+        val own = decay / (1 + 0.25 * (k - 1))
+        add(f, a, 0.0, own)
+        add(f + 0.3 + 0.5 * random.next(), a * (0.3 + 0.4 * random.next()), 0.0, own * 1.4)
     }
     // Driven through the bridge, so they come up over a fifth of a second and outlast the plucked string.
     val a2 = detune(110.0, lowStringsCents)

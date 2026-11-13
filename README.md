@@ -27,6 +27,18 @@ terminal with the Android SDK installed (`ANDROID_HOME` set, or `sdk.dir` in
 
 Requires Android 8.0 (API 26) or newer.
 
+To see what the engine makes of a recording (no phone needed), convert it to
+a mono float WAV and run the report; the notes heard, their offsets and how
+steady the reading was are printed one line per file:
+
+```sh
+ffmpeg -i note.m4a -ac 1 -ar 48000 -c:a pcm_f32le recordings/note.wav
+TUNER_SUMMARY=recordings ./gradlew :engine:test --rerun -i | grep "SUM "
+```
+
+`RecordingReport.kt` in the engine's tests describes two more detailed
+reports.
+
 | Module | What it is |
 | --- | --- |
 | `engine` | The tuner: DSP, instruments, search/lock logic. Pure Kotlin, tested on the JVM. |

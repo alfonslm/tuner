@@ -69,6 +69,8 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         /** Current comb half-width; shrinks as the string approaches the target. */
         var widthCents: Double,
         var lastHeard: Double,
+        /** Since when only an overtone of the target has been heard, if that is the case. */
+        var overtoneSince: Double? = null,
     ) {
         val frame = FloatArray(detector.frameLength)
         var misses = 0
@@ -94,6 +96,8 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
     private lateinit var ring: RingBuffer
     private lateinit var stability: StabilityWindow
     private lateinit var smoother: ReadingSmoother
+    private val recentLevels = DoubleArray(3) { 0.0 }
+    private var blocksSeen = 0L
     private var lock: Lock? = null
     private var samples = 0L
 
@@ -180,9 +184,12 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         }
         adaptComb(pitch)
 
-        // The attack of a pluck is not worth showing.
+        // The attack of a pluck is not worth showing. Neither is the frame in which the sound
+        // surges: that is the pluck arriving, a frame before there is enough of it to be recognised.
         val plucked = pluckedAt
         if (plucked != null && (samples - plucked) * 1000.0 / sampleRate < config.display.attackHoldMs) pitch = null
+        if (levelDb - recentLevels.min() >= config.display.surgeDb) pitch = null
+        recentLevels[(blocksSeen++ % recentLevels.size).toInt()] = levelDb
 
         // 4. Display smoothing.
         val row = spectrumRow(time, audible, pitch?.target ?: lock?.target)
@@ -272,7 +279,11 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
                     // An overtone of what the comb tracks is usually the wide detector's own
                     // octave error - the mistake the lock exists to prevent - unless the string's
                     // own partials say the sound really has moved up there.
-                    above > 1 -> focus.profile.supportFor(above) < config.lock.minOvertoneSupport
+                    above > 1 -> focus.profile.supportFor(above) < config.lock.minOvertoneSupport &&
+                        // ...and there is a string up there. A low string heard through a small
+                        // microphone is mostly its octave; two semitones from the nearest string,
+                        // that octave is not somebody plucking that string.
+                        abs(settled.cents) <= config.lock.overtoneHandoffCents
                     // A note that what the comb tracks is an overtone of: with both strings
                     // ringing, their common period is the lower one's, so the wide detector says
                     // that. Believe it only if that string has just been plucked.
@@ -281,16 +292,47 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
                 }
             }
             if (!newNote) {
+                lock.overtoneSince = null
                 lock.lastHeard = time
                 val target = followTarget(focus.frequency, time)
                 return Pitch(focus.frequency, target, PitchSource.FOCUSED, focus.profile.salience, lock.frame.size)
             }
         }
 
+        if (elsewhere && settled != null && wide != null && focus != null &&
+            overtoneNumber(wide.frequency, focus.frequency) > 1 && abs(settled.cents) > config.lock.overtoneHandoffCents
+        ) {
+            // Only an overtone of our string is left to hear, and no string lives where it is.
+            // Not a reading of our string, but no reason to leave it either.
+            lock.lastHeard = time
+            return null
+        }
+
+        val overtone = if (elsewhere && wide != null) overtoneNumber(wide.frequency, lock.target.frequency) else 0
+        if (overtone > 1 && (focus == null || focus.profile.supportFor(overtone) >= config.focus.minFundamentalSupport)) {
+            // The comb has lost the string for the moment and the wide detector names one of its
+            // overtones, which is its favourite mistake. The string's other partials are still
+            // there, so give the comb time to find it again.
+            val since = lock.overtoneSince ?: time.also { lock.overtoneSince = it }
+            if ((time - since) * 1000 < config.lock.overtoneWaitMs) {
+                lock.lastHeard = time
+                return null
+            }
+        } else {
+            lock.overtoneSince = null
+        }
+
         if (elsewhere && settled != null && wide != null) {
             // A different note is clearly and steadily sounding: move the filter to it.
             engage(settled.target, settled.cents, pinned = false, time)
             return shown(wide, settled.target)
+        }
+
+        if (focus != null && focus.faded) {
+            // The string has faded and what still sounds near it is other strings ringing along,
+            // at their pitch, not its. Nothing to show; the lock waits for the next pluck.
+            lock.lastHeard = time
+            return null
         }
 
         if (wide != null && abs(centsBetween(wide.frequency, lock.target.frequency)) <= lock.captureCents) {

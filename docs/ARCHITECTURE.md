@@ -266,6 +266,13 @@ simulation of that (a stiff high E, every partial a beating pair, the A and
 low E strings ringing along 8 cents sharp) read +2.1 cents on average and
 wandered from -0.3 to +4.2.
 
+Recordings of a real guitar then showed it directly. The high E string was 7
+cents flat, and partials 4 to 7 said so steadily. The fundamental did not: it
+swung between -10 and +10 cents, 1.3 times a second, because a second tone sat
+on it at 0 cents, the in-tune A and low E strings ringing along. A second
+after the pluck the string's own fundamental had faded and only that tone was
+left, so the tuner showed a flat string as in tune.
+
 So the locked reading is taken from the partials one at a time
 (`PartialPitch`). Each one's frequency is the peak of the spectrum next to
 where it is expected, interpolated to a small fraction of a bin; with the
@@ -276,6 +283,16 @@ are left out: a weighted median finds what most of the weight agrees on, and
 only the partials within about 2 cents of it are averaged. The same
 simulation then reads +0.5 and stays between +0.1 and +0.9.
 
+A partial that disagrees is also remembered. While at least three partials
+agree, one that does not is being pulled by something else, and that
+something outlasts the plucked string. After five frames of disagreeing it is
+left out for the rest of the note, also once the others have faded and there
+is no majority left to outvote it; trust returns slowly if it agrees again,
+and at once at the next pluck. When only distrusted partials are left, the
+string can no longer be read: the estimate is marked **faded**, nothing is
+shown, and the lock waits for the next pluck instead of falling back on the
+wide-band reading, which would be that same ringing tone.
+
 The stiffness B belongs to the string, not to the moment, so it is measured as
 the note sounds: the slope of the partials' offsets against k², as the median
 of the slopes between pairs of partials, followed slowly and remembered per
@@ -285,6 +302,25 @@ replaces it. Frames in which the partials do not lie on a stiff string's line
 partials over each other with the same measured stiffness, so the stripe and
 the needle agree; with a fixed value the stripe sat a cent to one side on any
 string that differed from the preset.
+
+### Which octave
+
+A small microphone hears little of a low string's fundamental; the second
+partial is easily 10 dB above it. Three things follow, all seen on the
+recordings (a laptop microphone, low E and A strings, fretted notes on them):
+
+- The wide detector takes the shortest period that is nearly as good as the
+  best one. "Nearly" was 65 % of the best, chosen when a low ratio was the
+  only way to hear a plucked string over one ringing below it. Since
+  `SpectralHistory` does that job, the ratio is 85 %, and the note is found at
+  its own octave from the start.
+- Once locked, the wide detector naming an overtone of the locked string moves
+  the lock only if the string's other partials hold under 30 % of the energy
+  *and* there is a string within 60 cents of that overtone. A guitar's low E
+  went to "D string, 198 cents sharp" without the second condition.
+- When the comb loses the string for a moment (a pluck's attack does that)
+  while the wide detector names an overtone and the string's other partials
+  are still present, the lock waits 400 ms before believing it.
 
 ### Keeping it honest
 
@@ -429,7 +465,10 @@ standard deviations either side. On a clean note it is hidden by the needle;
 in noise, on a dying note or against a beating overtone it is several cents
 wide and says how far the needle can be trusted.
 
-Nothing is shown for 150 ms after a pluck is noticed. The attack is noise and
+Nothing is shown for 150 ms after a pluck is noticed, nor in a frame that is
+10 dB louder than the quietest of the three before it: that is the pluck
+arriving, a frame before there is enough of it to be recognised, and it reads
+anything (20 cents off on the recordings). The attack is noise and
 a moment of wildly sharp pitch, and the analysis windows still hold part of
 the sound from before; the previous reading stays on screen meanwhile.
 
@@ -573,7 +612,7 @@ ones that shape behaviour:
 | `focus.minFrameMs` / `maxFrameMs` | 120 / 150 | focused analysis window |
 | `focus.minProminence` / `minExplained` / `minFundamentalSupport` / `maxSubharmonic` | 12 / 0.45 / 0.06 / 1.0 | validation thresholds |
 | `wide.minClarity` / `minLockClarity` | 0.75 / 0.5 | periodicity needed for a wide-band reading to be shown / to count towards a lock |
-| `wide.peakPickRatio` | 0.65 | how readily a shorter period is preferred |
+| `wide.peakPickRatio` | 0.85 | how readily a shorter period is preferred |
 | `fresh.memoryMs` / `fadeMs` / `onsetRise` | 500 / 1500 / 0.25 | hearing a plucked string apart from ringing ones |
 | `display.smoothingMs` | 200 | time constant of the needle's moving average; longer is steadier and trails a turning peg further. Set from the Needle response setting (100 / 200 / 400) |
 | `display.spreadMs` | 400 | time over which the scatter shown behind the needle is measured |
@@ -588,7 +627,7 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
 
 `./gradlew test` needs no device. It runs:
 
-- **70 engine tests** against a plucked-string synthesizer (inharmonic
+- **73 engine tests** against a plucked-string synthesizer (inharmonic
   partials with individual decay, weak fundamental, white noise, mains hum):
   - each guitar string is identified, locked within 0.5 s of the pluck, and
     read to within 0.3 cent;
@@ -602,6 +641,12 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
     stripe is within 0.7 cent of it;
   - a neighbour 15 cents above the fundamental and nearly as loud does not
     move the reading by more than 0.3 cent;
+  - a string 7 cents flat that fades under in-tune strings ringing along is
+    read at its own pitch for as long as it is read, and then not at all;
+  - a low E of which mostly the even partials are left stays the low E, where
+    the partials alone would send the lock to the D string;
+  - a pluck after the string was stopped by hand shows nothing until it reads
+    the new pitch;
   - in noise where wide-band detection fails on more than 15 of 20 trials, the
     focused detector is right on at least 19;
   - noise and silence never produce a reading; every other string of the
@@ -664,15 +709,30 @@ been through the engine yet.
 
 ## 8. Limits and next steps
 
-- **The fixes for the reports from a phone are verified in simulation only.**
-  Two things were reported: the high E read sharp, and the needle wandered on
-  a ringing note. Two causes reproduce in simulation, and both are fixed
-  there: a window too short to keep other ringing strings out (section 4,
-  "Strings that are still ringing"), and low strings ringing along on the
-  partials the reading leaned on most (section 4, "Reading the pitch off the
-  partials"). The simulation of the second was built to match one screenshot.
-  A few seconds of recorded audio from the phone would settle whether it
-  matches the instrument.
+- **Checked against recordings, not yet on a phone by me.** Sixteen recordings
+  of an acoustic guitar through a laptop microphone (the six open strings
+  plucked several times each, and fretted notes from F2 to E5) were run
+  through the engine with `RecordingReport`. They are not in the repository.
+  After the changes they prompted, every open string is named correctly in
+  guitar, automatic and chromatic mode; within a note 90 % of the readings lie
+  in a band 1 to 3 cents wide (part of it the string's own drift as it
+  decays); and there is no jump towards the strings ringing along and no
+  octave change. The first moments after some hard plucks still read up to 10
+  cents off, which may be the string (see below). A laptop microphone is not a
+  phone's; the phone remains to be confirmed.
+- **Known from the recordings and left as it is:**
+  - a note whose pitch really moves is followed, and if it moves across the
+    midpoint between two semitones in chromatic mode the target changes back
+    and forth with it (one fretted note swung ±12 cents twice a second);
+  - late in the tail of a low note, when its fundamental has all but gone, a
+    chromatic lock can still move to the octave above (once in sixteen
+    recordings, 7 s into the note);
+  - in instrument mode a fretted note is shown as the nearest open string a
+    long way out of tune, and beyond about three semitones above the top
+    string an octave too low. The instrument modes are for open strings;
+    chromatic is for everything else;
+  - mains hum in a silent room can be read as a note (100 Hz showed as
+    "A2 -182" at -62 dBFS for a moment).
 - **A hard pluck really is sharp at first.** A string plucked hard starts
   above its pitch and settles over about a second; the tuner shows that, as it
   should, and the averaged needle runs a little behind it on the way down.

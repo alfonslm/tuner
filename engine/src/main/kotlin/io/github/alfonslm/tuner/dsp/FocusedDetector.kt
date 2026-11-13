@@ -41,6 +41,12 @@ class FocusedEstimate(
     val valid: Boolean,
     /** True when measured on what is new in the spectrum, with the strings that were already ringing taken away. */
     val fresh: Boolean = false,
+    /**
+     * True when the string itself can no longer be told from what is ringing
+     * along with it: its own partials have sunk into the noise and what is left
+     * near the target is another string's. Never [valid].
+     */
+    val faded: Boolean = false,
 )
 
 /**
@@ -109,6 +115,7 @@ class FocusedDetector(
      * @param onsetSamplesAgo how long ago the last pluck was noticed, or `null` if not known
      */
     fun begin(onsetSamplesAgo: Long?, past: (samplesAgo: Int, frame: FloatArray) -> Boolean) {
+        partials.pluck(0)
         val history = history ?: return
         val stride = options.fresh?.stride ?: return
         history.clear()
@@ -136,7 +143,7 @@ class FocusedDetector(
         primed = false
         history?.release()
         // Until the attack has left the window, the partials are a mix of two notes.
-        partials.pause((frameLength + options.blockSize - 1) / options.blockSize + ATTACK_FRAMES)
+        partials.pluck((frameLength + options.blockSize - 1) / options.blockSize + ATTACK_FRAMES)
     }
 
     val frameLength: Int get() = analyzer.frameLength
@@ -188,12 +195,14 @@ class FocusedDetector(
         return FocusedEstimate(
             frequency = frequency,
             profile = profile,
-            valid = peak.value >= options.minPeak &&
+            valid = !partials.faded &&
+                peak.value >= options.minPeak &&
                 profile.prominence >= options.minProminence &&
                 profile.explained >= options.minExplained &&
                 profile.fundamentalSupport >= options.minFundamentalSupport &&
                 profile.subharmonic <= options.maxSubharmonic,
             fresh = fresh,
+            faded = partials.faded,
         )
     }
 

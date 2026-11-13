@@ -40,6 +40,15 @@ import kotlin.math.sqrt
  * way a stiff string's do (a pluck's attack, two notes in one window) teach
  * nothing.
  *
+ * A partial that disagrees is also remembered. While most partials agree, one
+ * that does not is being pulled by something else, and that something usually
+ * outlasts the plucked string: on a recording of a guitar's high E the
+ * fundamental sat between the string's own -7 cents and the 0 cents of the low
+ * strings ringing along, and a second after the pluck only the 0 was left.
+ * Such a partial is distrusted for the rest of the note, also once the others
+ * have faded and there is no majority left to outvote it. When only
+ * distrusted partials are left, the string can no longer be read ([faded]).
+ *
  * @param zeroPadding FFT size divided by frame length of the analysis that produces the spectra
  */
 class PartialPitch(private val model: HarmonicModel, private val geometry: CombGeometry, zeroPadding: Double) {
@@ -51,6 +60,14 @@ class PartialPitch(private val model: HarmonicModel, private val geometry: CombG
     // bin centre; this cubic correction (Abe & Smith) removes almost all of that bias.
     private val biasCorrection = 0.247560 / (zeroPadding * zeroPadding) + 0.084372 / zeroPadding.pow(4)
 
+    /**
+     * True when the last [measure] found the string's sound only in partials
+     * that have been disagreeing with the rest: what is left is not the string.
+     */
+    var faded = false
+        private set
+
+    private val distrust = DoubleArray(model.partials)
     private var learned = 0
     private var paused = 0
     private val ceiling = max(4 * model.inharmonicity, MIN_CEILING)
@@ -64,9 +81,14 @@ class PartialPitch(private val model: HarmonicModel, private val geometry: CombG
     private val slopeWeights = DoubleArray(slopes.size)
     private val slopeOrder = arrayOfNulls<Int>(slopes.size)
 
-    /** Learns nothing about the stiffness from the next [frames] measurements: they contain a pluck. */
-    fun pause(frames: Int) {
+    /**
+     * The string has been plucked: every partial is its own again. Nothing is
+     * learned about the stiffness from the next [frames] measurements, which
+     * contain the attack.
+     */
+    fun pluck(frames: Int) {
         paused = frames
+        distrust.fill(0.0)
     }
 
     /**
@@ -113,13 +135,28 @@ class PartialPitch(private val model: HarmonicModel, private val geometry: CombG
             amplitude[kept] = amplitude[i]
             kept++
         }
+        // Partials that have been disagreeing with the rest stay out, majority or not.
+        val measured = kept
+        var doubted = 0
+        kept = 0
+        for (i in 0 until measured) {
+            val k = number[i]
+            if (distrust[k - 1] >= DISTRUST_FRAMES) {
+                // Kept behind the trusted ones, to be judged against them below.
+                doubted++
+                continue
+            }
+            swap(i, kept)
+            kept++
+        }
+        faded = kept < 2 && doubted > 0
         if (kept < 2) return null
 
         // 2. The string's stiffness, from how the offsets grow with k².
         learnStiffness(kept)
 
         // 3. What the partials say about the fundamental, each with the stiffness taken out.
-        for (i in 0 until kept) {
+        for (i in 0 until measured) {
             val k = number[i]
             offset[i] -= 600 * log2(1 + inharmonicity * k * k)
             weight[i] = k * k * amplitude[i]
@@ -129,12 +166,33 @@ class PartialPitch(private val model: HarmonicModel, private val geometry: CombG
         val tolerance = AGREE_CENTS + 1.5 * weightedMedian(scratch, weight, order, kept)
         var sum = 0.0
         var total = 0.0
+        var agreeing = 0
         for (i in 0 until kept) {
             if (abs(offset[i] - middle) > tolerance) continue
             sum += weight[i] * offset[i]
             total += weight[i]
+            agreeing++
+        }
+
+        // 4. Who disagreed? Only a clear majority can say.
+        if (agreeing >= MAJORITY) {
+            for (i in 0 until measured) {
+                val k = number[i]
+                distrust[k - 1] = if (abs(offset[i] - middle) > tolerance) {
+                    min(MAX_DISTRUST, distrust[k - 1] + 1)
+                } else {
+                    max(0.0, distrust[k - 1] - REGAIN)
+                }
+            }
         }
         return coarseHz * 2.0.pow(sum / total / 1200)
+    }
+
+    private fun swap(i: Int, j: Int) {
+        if (i == j) return
+        val k = number[i]; number[i] = number[j]; number[j] = k
+        val o = offset[i]; offset[i] = offset[j]; offset[j] = o
+        val a = amplitude[i]; amplitude[i] = amplitude[j]; amplitude[j] = a
     }
 
     private fun learnStiffness(count: Int) {
@@ -221,5 +279,15 @@ class PartialPitch(private val model: HarmonicModel, private val geometry: CombG
 
         /** Per frame: the stiffness estimate follows over roughly thirty frames. */
         const val LEARNING_RATE = 0.03
+
+        /** This many partials agreeing make a majority that can call another one wrong. */
+        const val MAJORITY = 3
+
+        /** A partial that has disagreed in this many more frames than it has made up for is left out. */
+        const val DISTRUST_FRAMES = 5.0
+        const val MAX_DISTRUST = 12.0
+
+        /** Trust comes back at this many frames per frame of agreeing. */
+        const val REGAIN = 0.25
     }
 }
