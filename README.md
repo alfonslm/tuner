@@ -38,6 +38,13 @@ Requires Android 8.0 (API 26) or newer.
    instrument on **Automatic** (the default) the tuner starts out chromatic
    and recognises the instrument once it has heard two different strings; you
    can also pick the instrument yourself.
+   | Instrument | Two strings that set it |
+   | --- | --- |
+   | Guitar, bass, ukulele, cello | any two |
+   | Violin | the E string and any other |
+   | Viola | the C string and any other |
+
+   (A violin and a viola share G, D and A, so those alone cannot tell them apart.)
 2. The tuner shows the note wide-band, then locks ("Locked on A2 · harmonic
    filter ±35¢") once the note is steady. Pluck another string and it follows.
 3. Tap a string button to pin the tuner to it (useful for a string that is far
