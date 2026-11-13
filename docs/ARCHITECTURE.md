@@ -88,7 +88,9 @@ web page: browsers only *request* that processing be turned off.
   Before this the scale went wherever the latest reading was, and in a room
   with a television on it slid and zoomed several times a second. Run through
   the engine, twenty seconds of speech-like chatter produce about a hundred
-  stray readings and do not move the scale once.
+  stray readings and do not move the scale once. When the scale does move it
+  glides: a weak spring without bounce takes it there in about a second, so
+  the needle is quick and the ground it moves over is not.
 - **The waterfall** under it: the last eight seconds on the same horizontal
   scale, newest at the top and moving down, in one of two styles chosen in the
   settings.

@@ -1,7 +1,9 @@
 package io.github.alfonslm.tuner.app.ui
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -310,8 +312,11 @@ private fun Display(state: TunerUiState, modifier: Modifier = Modifier) {
                 unclear = unclarity(live?.spreadCents?.toFloat(), live?.confidence?.toFloat()),
                 time = state.latest?.time ?: 0.0,
             )
-            val scaleCentre by animateFloatAsState(target.centre, animationSpec = tween(durationMillis = 250), label = "scaleCentre")
-            val scaleRange by animateFloatAsState(target.range, animationSpec = tween(durationMillis = 250), label = "scaleRange")
+            // Wherever it is going, it goes there gently: about a second, without overshoot. The
+            // needle is quick; the ground it moves over should not be.
+            val glide = spring<Float>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = SCALE_GLIDE_STIFFNESS)
+            val scaleCentre by animateFloatAsState(target.centre, animationSpec = glide, label = "scaleCentre")
+            val scaleRange by animateFloatAsState(target.range, animationSpec = glide, label = "scaleRange")
             val window = ScaleWindow(scaleCentre, scaleRange)
             Column(Modifier.weight(1f)) {
                 Meter(
@@ -453,3 +458,9 @@ private fun StringButtons(strings: List<Target>, activeId: String?, pinnedId: St
 
 /** Digits of equal width, so the readouts do not jitter sideways as the numbers change. */
 private const val TABULAR = "tnum"
+
+/**
+ * How softly the scale glides to a new place: a spring this weak, without
+ * bounce, takes about a second to arrive (Compose's "very low" is 50).
+ */
+private const val SCALE_GLIDE_STIFFNESS = 40f
