@@ -2,13 +2,17 @@ package io.github.alfonslm.tuner.app
 
 import io.github.alfonslm.tuner.engine.TunerReading
 
-/** One moment of the waterfall: how far from the target the string was. */
-data class TracePoint(val time: Double, val cents: Float, val inTune: Boolean)
+/**
+ * One moment of the waterfall: how far from the target the string was, and how
+ * far its overtones disagreed about that ([spread], in cents either side).
+ */
+data class TracePoint(val time: Double, val cents: Float, val spread: Float, val inTune: Boolean)
 
 /**
  * The recent history of the reading, for the waterfall under the meter: where
  * the pitch has been over the last few seconds, so the player can see how far
- * a turn of the peg moved it and whether the note is drifting.
+ * a turn of the peg moved it and whether the note is drifting, and how sure
+ * the spectrum was about it at each moment.
  *
  * Offsets are only comparable against one target, so the history starts over
  * when the tuner moves to another string. Time keeps running through silence;
@@ -29,7 +33,8 @@ data class PitchTrace(
             return copy(points = points.recent(reading.time), now = reading.time)
         }
         val kept = if (target == targetId) points.recent(reading.time) else emptyList()
-        return PitchTrace(target, kept + TracePoint(reading.time, cents.toFloat(), reading.inTune), reading.time)
+        val point = TracePoint(reading.time, cents.toFloat(), (reading.spreadCents ?: 0.0).toFloat(), reading.inTune)
+        return PitchTrace(target, kept + point, reading.time)
     }
 
     private fun List<TracePoint>.recent(now: Double): List<TracePoint> {

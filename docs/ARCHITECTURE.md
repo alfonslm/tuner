@@ -82,6 +82,11 @@ web page: browsers only *request* that processing be turned off.
   how far a turn of the peg moved the string and whether a note drifts as it
   rings. The history belongs to one string and starts over when the tuner
   moves to another; silence between plucks shows as a gap.
+  The trace has a **width taken from the spectrum**: the line is the reading,
+  and the band around it reaches as far either side as the string's overtones
+  disagreed about the pitch at that moment (see "Partial spread" in section
+  4). A clean, settled note is a thin line; a stiff string, a noisy room or a
+  note dying away is a wider band.
 - **The note name**: large while the tuner is chromatic (it is then the main
   information), small once the instrument is known, because the row of string
   buttons already highlights which string is sounding.
@@ -101,7 +106,7 @@ engine/src/main/kotlin/io/github/alfonslm/tuner/
     Fft.kt                  radix-2 FFT
     Spectral.kt             windowed power spectrum → filtered autocorrelation
     WideDetector.kt         note-agnostic pitch detector (acquisition, watchdog)
-    HarmonicComb.kt         string model: comb filter + harmonic validation
+    HarmonicComb.kt         string model: comb filter, harmonic validation, partial spread
     FocusedDetector.kt      target-aware pitch detector (tracking)
   music/
     Notes.kt                Hz ↔ MIDI ↔ names, cents
@@ -227,6 +232,24 @@ A reading is only valid if all three hold:
 | `explained` | Of the *tonal* energy (above the measured noise floor), how much do these partials account for? Includes where a lower note's own partials would be. | another string a fourth/fifth away; the tail of a lower string whose 2nd/3rd partial lands near the target |
 | `fundamentalSupport` | Is there energy on partials that are *not* multiples of 2, 3, 5, 7? | a note an octave (or twelfth…) *above* the target, all of whose partials fit the comb — e.g. E4 while locked on E2 |
 
+### Partial spread: more than one number
+
+A pitch estimate is one number for the whole sound. The spectrum knows more:
+every partial is its own measurement of the fundamental (its frequency divided
+by its number, corrected for the model's stiffness), and on a real string they
+never agree exactly. Stiffness the preset does not account for fans them out,
+noise and other ringing strings pull single partials aside, and a dying note
+leaves ragged remains.
+
+`partialSpread()` reads each partial's frequency off the power spectrum
+(quadratic interpolation of the peak with the standard bias correction for a
+Hann window, good to about a thousandth of a bin) and returns the
+power-weighted RMS distance, in cents, of those per-partial readings from the
+estimate. It is reported as `TunerReading.spreadCents`, smoothed like the
+reading itself, in both modes. The estimate stays the number to tune by; the
+spread says how much the sound backs it up, and the waterfall draws it as the
+width of the trace.
+
 ## 5. Automatic switching
 
 Two automatic modes plus a manual pin. The wide detector runs in both automatic modes: as the source of readings while
@@ -347,7 +370,7 @@ an alternate tuning is one entry (string notes + harmonic model).
 
 `./gradlew test` needs no device. It runs:
 
-- **43 engine tests** against a plucked-string synthesizer (inharmonic
+- **47 engine tests** against a plucked-string synthesizer (inharmonic
   partials with individual decay, weak fundamental, white noise, mains hum):
   - each guitar string is identified, locked within 0.5 s of the pluck, and
     read to within 0.3 cent;
@@ -359,17 +382,20 @@ an alternate tuning is one entry (string notes + harmonic model).
     instrument is rejected even with the comb fully open;
   - E2 ↔ E4, string changes, chromatic hand-off through a semitone, hold and
     release, and pinning behave as described above;
+  - the partial spread is under 0.2 cent for an ideal string and grows with
+    stiffness, noise, and a second string sounding;
   - automatic mode: every pair of strings of every preset identifies its
     instrument (or stays undecided where two instruments share the pair), and
     the engine recognises guitar, bass, ukulele, violin, viola and cello from
     two plucked strings (a guitar within half a second of the second pluck).
-- **10 app tests**. Six drive the real pipeline (view model → flow → engine)
+- **11 app tests**. Six drive the real pipeline (view model → flow → engine)
   with a synthetic microphone: a tone gets locked and shown and leaves a
   steady history, stopping closes the stream, a microphone that fails to open
   is reported, settings changes reach the running engine, settings persist,
-  and automatic mode recognises a guitar and offers its strings. Four cover
-  the waterfall's history: it records, runs on through silence, forgets what
-  is older than its window, and starts over on another string.
+  and automatic mode recognises a guitar and offers its strings. Five cover
+  the waterfall's history: it records offset and spread, runs on through
+  silence, forgets what is older than its window, and starts over on another
+  string.
 
 `./gradlew :app:validateDebugScreenshotTest` renders the Compose screen on
 the JVM in eleven states (idle, searching, locked sharp, in tune, held

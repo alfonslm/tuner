@@ -27,6 +27,9 @@ class SpectralAnalyzer(val sampleRate: Int, val fftSize: Int, val frameLength: I
     /** Half-width of the window's spectral main lobe, in Hz. */
     val lobeHz: Double = 2.0 * sampleRate / frameLength
 
+    /** How much finer the bins are than the frame alone would give. */
+    val zeroPadding: Double = fftSize.toDouble() / frameLength
+
     private val fft = Fft(fftSize)
     private val window = DoubleArray(frameLength) { 0.5 - 0.5 * cos(2 * PI * it / frameLength) }
     private val windowAcf = DoubleArray(maxLag + 1)

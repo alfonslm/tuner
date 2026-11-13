@@ -6,6 +6,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
@@ -26,7 +27,12 @@ private const val GRID_SECONDS = 2.0
  * pitch, a slope means it is changing, and the distance to the centre line is
  * how far there is still to go.
  *
- * The trace is coloured like the needle was at that moment and fades with age.
+ * The line is the reading; the band around it is how far the string's
+ * overtones disagreed about the pitch at that moment (the engine's partial
+ * spread). A clean, settled note is a thin line; a stiff string, a noisy room
+ * or a note dying away shows as a wider band.
+ *
+ * Both are coloured like the needle was at that moment and fade with age.
  */
 @Composable
 fun Waterfall(trace: PitchTrace, inTuneCents: Float, modifier: Modifier = Modifier) {
@@ -51,8 +57,27 @@ fun Waterfall(trace: PitchTrace, inTuneCents: Float, modifier: Modifier = Modifi
             age += GRID_SECONDS
         }
 
-        val stroke = 3.dp.toPx()
+        // The band: at each moment it reaches as far either side of the reading as the
+        // overtones disagreed about it. A clean, settled string leaves little more than the line.
+        val band = Path()
         var previous: TracePoint? = null
+        for (point in trace.points) {
+            val before = previous
+            if (before != null && point.time - before.time <= GAP_SECONDS) {
+                band.rewind()
+                band.moveTo(x(before.cents - before.spread), y(before.time))
+                band.lineTo(x(before.cents + before.spread), y(before.time))
+                band.lineTo(x(point.cents + point.spread), y(point.time))
+                band.lineTo(x(point.cents - point.spread), y(point.time))
+                band.close()
+                drawPath(band, traceColor(point).copy(alpha = 0.3f * fade(trace.now - point.time)))
+            }
+            previous = point
+        }
+
+        // The line through it: the reading itself.
+        val stroke = 2.dp.toPx()
+        previous = null
         for (point in trace.points) {
             val position = Offset(x(point.cents), y(point.time))
             val color = traceColor(point).copy(alpha = fade(trace.now - point.time))

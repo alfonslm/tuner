@@ -29,6 +29,8 @@ class FocusedEstimate(
     /** 0..1 – how string-like and on-target the sound is. */
     val salience: Double,
     val explained: Double,
+    /** How far the individual partials disagree about the pitch, in cents; see [partialSpread]. */
+    val spreadCents: Double?,
     /** False when a pitch was found but the sound does not look like the target string. */
     val valid: Boolean,
 )
@@ -104,6 +106,7 @@ class FocusedDetector(
             frequency = frequency,
             salience = profile.salience,
             explained = profile.explained,
+            spreadCents = partialSpread(power, frequency, model, geometry, analyzer.zeroPadding),
             valid = peak.value >= options.minPeak &&
                 profile.salience >= options.minSalience &&
                 profile.explained >= options.minExplained &&

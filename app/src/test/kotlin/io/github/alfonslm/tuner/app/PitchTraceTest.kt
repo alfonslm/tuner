@@ -12,7 +12,13 @@ class PitchTraceTest {
     private val a2 = Target("s1:A2", "A2", 45, 110.0)
     private val d3 = Target("s2:D3", "D3", 50, 146.83)
 
-    private fun reading(time: Double, target: Target? = a2, cents: Double? = 0.0, inTune: Boolean = false) = TunerReading(
+    private fun reading(
+        time: Double,
+        target: Target? = a2,
+        cents: Double? = 0.0,
+        inTune: Boolean = false,
+        spread: Double? = 1.0,
+    ) = TunerReading(
         time = time,
         instrumentId = "guitar",
         mode = TunerMode.LOCKED,
@@ -21,6 +27,7 @@ class PitchTraceTest {
         target = target,
         frequency = cents?.let { 110.0 },
         cents = cents,
+        spreadCents = spread.takeIf { cents != null },
         confidence = 1.0,
         inTune = inTune,
         lock = null,
@@ -35,6 +42,15 @@ class PitchTraceTest {
         assertEquals(listOf(-20f, -12f, 1.5f), trace.points.map { it.cents })
         assertEquals(listOf(false, false, true), trace.points.map { it.inTune })
         assertEquals(1.04, trace.now)
+    }
+
+    @Test
+    fun `keeps the overtone spread of each moment, as the width of the trace`() {
+        val trace = PitchTrace()
+            .add(reading(1.00, spread = 6.5))
+            .add(reading(1.02, spread = 2.0))
+            .add(reading(1.04, spread = null)) // could not be measured: drawn as the bare line
+        assertEquals(listOf(6.5f, 2f, 0f), trace.points.map { it.spread })
     }
 
     @Test

@@ -39,6 +39,12 @@ data class TunerReading(
     /** Smoothed pitch and its offset from [target]; `null` when not [voiced]. */
     val frequency: Double?,
     val cents: Double?,
+    /**
+     * How far the individual overtones disagree about the pitch, in cents
+     * (power-weighted RMS, smoothed like [cents]). Near zero for a clean string;
+     * wider for a stiff or noisy one. `null` when not [voiced] or not measurable.
+     */
+    val spreadCents: Double?,
     /** 0..1 */
     val confidence: Double,
     /** Within tolerance, and has been for a moment. */
