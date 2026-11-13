@@ -104,15 +104,55 @@ class EngineTest {
         val moving = readings.between(1.3, 1.9)
         assertTrue(moving.all { it.source == PitchSource.FOCUSED })
 
-        // The needle trails a steadily moving pitch by a little over a tenth of a second...
+        // The needle trails a steadily moving pitch, by a bounded amount: a few cents, however long it moves.
         assertTrue(moving.all { it.delay in 0.09..0.13 }, "delays ${moving.map { it.delay }.distinct()}")
-        assertTrue(moving.all { truth(it.time) - it.cents!! in 2.0..4.5 }, "lag ${moving.map { truth(it.time) - it.cents!! }}")
-        // ...and the reading is right for the moment it describes.
-        assertTrue(moving.all { abs(truth(it.time - it.delay) - it.cents!!) < 0.7 }, "${moving.map { truth(it.time - it.delay) - it.cents!! }}")
+        assertTrue(moving.all { truth(it.time) - it.cents!! in 3.0..7.5 }, "lag ${moving.map { truth(it.time) - it.cents!! }}")
+        // Dated by its delay, the reading is within half a stripe's width of the pitch at that moment.
+        assertTrue(moving.all { abs(truth(it.time - it.delay) - it.cents!!) < 4 }, "${moving.map { truth(it.time - it.delay) - it.cents!! }}")
 
-        // It has caught up within a quarter of a second of the pitch coming to rest.
-        assertTrue(readings.between(2.25, 3.0).all { abs(it.cents!!) < 0.5 })
+        // Once the pitch comes to rest the needle closes the last few cents gently: within half a second.
+        assertTrue(readings.between(2.5, 3.0).all { abs(it.cents!!) < 0.5 }, "${readings.between(2.5, 3.0).maxOf { abs(it.cents!!) }}")
         assertTrue(readings.filter { !it.voiced }.all { it.delay == 0.0 })
+    }
+
+    @Test
+    fun `holds the needle still when another string's overtone beats against the note`() {
+        // A lower string that is 20 cents out, set ringing by the pluck: its overtone sounds next to
+        // the high E and the two beat about three times a second. The estimate swings with the beat.
+        val seconds = 3.0
+        val beating = FloatArray((seconds * SAMPLE_RATE).toInt()) { i ->
+            val t = i.toDouble() / SAMPLE_RATE
+            (0.05 * (1 - kotlin.math.exp(-t / 0.15)) * kotlin.math.exp(-t / 3.0) * sin(2 * PI * detune(E4, 20.0) * t)).toFloat()
+        }
+        val signal = mix(pluckedString(seconds, E4, inharmonicity = 2e-5, decay = 2.0), beating)
+        fun swing(config: TunerConfig): Double {
+            val cents = run(engine(config), signal).between(0.8, 2.8).map { it.cents!! }
+            return cents.max() - cents.min()
+        }
+        // What the estimate does, shown by a needle that believes every reading...
+        val raw = swing(guitar.copy(display = guitar.display.copy(steadySmoothing = 0.6)))
+        // ...and what the needle does.
+        val steadied = swing(guitar)
+        assertTrue(raw > 7, "estimate swings by $raw")
+        assertTrue(steadied < 0.6 * raw, "needle swings by $steadied, estimate by $raw")
+    }
+
+    @Test
+    fun `goes straight to a newly plucked note and shows nothing of its attack`() {
+        val signal = mix(
+            whiteNoise(4.0, 0.003),
+            concat(pluckedString(2.0, detune(A2, -14.0)), pluckedString(2.0, detune(A2, 9.0), seed = 2)),
+        )
+        val readings = run(engine(), signal)
+        // Nothing for the first moment after the second pluck, during which the first reading
+        // stays on screen; then the new value at once, not a slow slide from the old one.
+        assertTrue(readings.between(2.07, 2.2).none { it.voiced })
+        val after = readings.between(2.07, 2.5).filter { it.voiced }
+        assertTrue(after.first().time < 2.3, "first reading at ${after.first().time}")
+        assertTrue(after.all { abs(it.cents!! - 9) < 0.5 }, "readings after the pluck: ${after.map { it.cents }}")
+        // The frame or two before the pluck is noticed may show a trace of it, no more.
+        assertTrue(readings.between(2.0, 2.07).all { !it.voiced || abs(it.cents!! + 14) < 3 })
+        assertTrue(readings.between(2.4, 4.0).all { abs(it.cents!! - 9) < 0.5 })
     }
 
     // --- switching strings ---

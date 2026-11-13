@@ -152,10 +152,12 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         val rms = wideAnalyzer.powerSpectrum(wideFrame, widePower)
         val levelDb = 20 * log10(rms + 1e-9)
         val audible = levelDb > config.levelGateDb
-        val wide = (if (audible) wideDetector.detect(widePower) else null)?.takeIf { it.clarity >= config.wide.minClarity }
+        // `wide` is good enough to act on; whether it is good enough to show is asked where it is shown.
+        val wide = (if (audible) wideDetector.detect(widePower) else null)?.takeIf { it.clarity >= config.wide.minLockClarity }
         if (audible && wideDetector.onset) {
             pluckedAt = samples
             lock?.detector?.pluck()
+            smoother.settle()
         }
         val wideTarget = wide?.let { targets.nearest(it.frequency) }
 
@@ -171,14 +173,16 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         var pitch: Pitch? = null
         if (lock != null) pitch = trackLocked(time, audible, wide, settled)
         if (lock == null) {
-            if (wide != null && wideTarget != null) {
-                pitch = Pitch(wide.frequency, wideTarget, PitchSource.WIDE, wide.clarity, wideFrame.size)
-            }
+            if (wide != null && wideTarget != null) pitch = shown(wide, wideTarget)
             if (config.smartFilter == SmartFilterMode.AUTO && settled != null) {
                 engage(settled.target, settled.cents, pinned = false, time)
             }
         }
         adaptComb(pitch)
+
+        // The attack of a pluck is not worth showing.
+        val plucked = pluckedAt
+        if (plucked != null && (samples - plucked) * 1000.0 / sampleRate < config.display.attackHoldMs) pitch = null
 
         // 4. Display smoothing.
         val row = spectrumRow(time, audible, pitch?.target ?: lock?.target)
@@ -284,18 +288,22 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         if (elsewhere && settled != null && wide != null) {
             // A different note is clearly and steadily sounding: move the filter to it.
             engage(settled.target, settled.cents, pinned = false, time)
-            return Pitch(wide.frequency, settled.target, PitchSource.WIDE, wide.clarity, wideFrame.size)
+            return shown(wide, settled.target)
         }
 
         if (wide != null && abs(centsBetween(wide.frequency, lock.target.frequency)) <= lock.captureCents) {
             // The comb lost the string (e.g. it was re-tuned in a jump) but it is still in range.
             lock.lastHeard = time
-            return Pitch(wide.frequency, lock.target, PitchSource.WIDE, wide.clarity, wideFrame.size)
+            return shown(wide, lock.target)
         }
 
         if (!lock.pinned && (time - lock.lastHeard) * 1000 > config.lock.holdMs) this.lock = null
         return null
     }
+
+    /** A wide-band reading for display, if it is clear enough to be shown at all. */
+    private fun shown(wide: PitchEstimate, target: Target): Pitch? =
+        if (wide.clarity >= config.wide.minClarity) Pitch(wide.frequency, target, PitchSource.WIDE, wide.clarity, wideFrame.size) else null
 
     /**
      * Hand the lock over to a neighbouring target when the string has been tuned

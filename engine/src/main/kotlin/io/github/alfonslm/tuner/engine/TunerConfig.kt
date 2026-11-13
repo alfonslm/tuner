@@ -49,6 +49,12 @@ data class WideConfig(
      */
     val minClarity: Double = 0.75,
     /**
+     * Periodicity that is enough to count towards a lock, though not to be shown.
+     * A string among several others reaches only this much on the whole sound;
+     * once locked, the focused detector judges it by its own partials.
+     */
+    val minLockClarity: Double = 0.5,
+    /**
      * The shortest period that is at least this good, relative to the best one,
      * is taken as the pitch. Low enough that the string just plucked wins over a
      * quieter one ringing an octave or two below it, whose longer period fits
@@ -130,8 +136,20 @@ data class LockConfig(
 data class DisplayConfig(
     /** Frames in the median that drops a single stray reading. */
     val medianFrames: Int = 3,
-    /** 0..1 weight of the newest value in the exponential average applied after the median. */
-    val smoothing: Double = 0.5,
+    /** Weight of a new estimate while it is within [steadyCents] of the needle: small, so wobble averages out. */
+    val steadySmoothing: Double = 0.12,
+    /** Weight of a new estimate once it is [movingCents] or more from the needle: large, so a real change is followed. */
+    val movingSmoothing: Double = 0.6,
+    val steadyCents: Double = 3.0,
+    val movingCents: Double = 9.0,
+    /** After a pluck, this many readings are followed closely before the steadying sets in. */
+    val settleFrames: Int = 6,
+    /**
+     * Nothing is shown for this long after a pluck is noticed. The attack is
+     * noise and a moment of wildly sharp pitch; the needle is better left where
+     * it was than thrown about by it.
+     */
+    val attackHoldMs: Double = 150.0,
     /** A gap longer than this restarts smoothing. */
     val resetGapMs: Double = 300.0,
     val inTuneCents: Double = 3.0,

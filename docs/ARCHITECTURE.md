@@ -100,6 +100,10 @@ web page: browsers only *request* that processing be turned off.
   information), small once the instrument is known, because the row of string
   buttons already highlights which string is sounding.
 
+The top right corner has two uses. While the tuner runs it is the smart-filter
+switch; while it is stopped it is the button that opens the settings, since
+neither is wanted in the other state.
+
 A second screen, **Settings**, holds the waterfall style and the list of
 tunings: every standard tuning with a switch that puts it in or out of use,
 and a *Duplicate* button that makes an editable copy (name, the note of each
@@ -290,6 +294,13 @@ appears. `SpectralHistory` uses that.
 The focused detector, which is created after the pluck that led to its lock,
 gets its background from the last second of audio still in the buffer.
 
+One case is excluded on purpose. When the string that is *already locked* is
+plucked again, the background would be that same string at the pitch it had
+before the peg was turned. Taking that away cuts into every partial of the new
+note from one side and shifts the reading (by 3 cents in the test that caught
+it). So a pluck of the locked string drops the background, and the whole sound
+is measured.
+
 Two further things make a mixture easier:
 
 - **Window length.** Every focused window is at least 120 ms, which resolves
@@ -339,13 +350,33 @@ and the reading deliberately is not.
 A row is produced every third block (about 16 per second) and travels in
 `TunerReading.spectrum`.
 
+### A steady needle
+
+A real string does not give a steady estimate. Another string's overtone
+sounding a few cents away makes it beat, two or three times a second, by
+several cents either way; averaging that out takes a quarter of a second, and
+a needle that slow is tiresome to tune by. `ReadingSmoother` therefore adapts:
+
+- a median of three drops a single stray frame;
+- while estimates stay within about 3 cents of where the needle is, each moves
+  it only a little (weight 0.12), so wobble averages out;
+- the further they are from it, the more they are believed, up to weight 0.6
+  from 9 cents on, so a pitch that has really moved is followed in a few
+  frames and never trails by much more than the width of that steady zone;
+- at a pluck the needle starts over from the new note's first reading and
+  follows closely for six frames, instead of creeping there from the old value.
+
+Nothing is shown for 150 ms after a pluck is noticed. The attack is noise and
+a moment of wildly sharp pitch, and the analysis windows still hold part of
+the sound from before; the previous reading stays on screen meanwhile.
+
 ### One time axis
 
 Results come out later than the sound they describe, and by different
-amounts. A reading describes the middle of its analysis window and is then
-smoothed (a median of three frames and an exponential average, kept short so
-the needle follows the peg): about 0.11 s in all for a guitar's A string. A
-spectrogram row describes the middle of a much longer window: about 0.25 s.
+amounts. A reading describes the middle of its analysis window (60 to 75 ms
+back) and is then smoothed; while the pitch is on the move that adds about
+35 ms. A spectrogram row describes the middle of a much longer window: about
+0.25 s.
 
 Drawn at the time they were produced, the reading would run beside the stripe
 whenever the pitch moves, not through it. So both carry the time of their
@@ -480,9 +511,12 @@ ones that shape behaviour:
 | `focus.marginCents` | 35 | comb half-width when the string is in tune |
 | `focus.minFrameMs` / `maxFrameMs` | 120 / 150 | focused analysis window |
 | `focus.minProminence` / `minExplained` / `minFundamentalSupport` / `maxSubharmonic` | 12 / 0.45 / 0.06 / 1.0 | validation thresholds |
-| `wide.minClarity` / `peakPickRatio` | 0.75 / 0.65 | periodicity needed for a wide-band reading; how readily a shorter period is preferred |
+| `wide.minClarity` / `minLockClarity` | 0.75 / 0.5 | periodicity needed for a wide-band reading to be shown / to count towards a lock |
+| `wide.peakPickRatio` | 0.65 | how readily a shorter period is preferred |
 | `fresh.memoryMs` / `fadeMs` / `onsetRise` | 500 / 1500 / 0.25 | hearing a plucked string apart from ringing ones |
-| `display.medianFrames` / `smoothing` | 3 / 0.5 | how hard the reading is smoothed; lower `smoothing` is steadier and slower |
+| `display.steadySmoothing` / `movingSmoothing` | 0.12 / 0.6 | how much one estimate moves the needle when it is near it / far from it |
+| `display.steadyCents` / `movingCents` | 3 / 9 | where "near" ends and "far" begins |
+| `display.attackHoldMs` | 150 | nothing is shown for this long after a pluck |
 | `display.inTuneCents` / `inTuneHoldMs` | 3 / 400 | when the display turns green |
 
 The standard tunings live in `music/Instruments.kt` (string notes + harmonic
@@ -493,7 +527,7 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
 
 `./gradlew test` needs no device. It runs:
 
-- **64 engine tests** against a plucked-string synthesizer (inharmonic
+- **66 engine tests** against a plucked-string synthesizer (inharmonic
   partials with individual decay, weak fundamental, white noise, mains hum):
   - each guitar string is identified, locked within 0.5 s of the pluck, and
     read to within 0.3 cent;
@@ -511,9 +545,13 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
   - the high E is read to within 1.5 cents over a ringing low E, A or B at
     12, 6 and 3 dB below it, and the tuner goes to the low E when that is
     plucked over a ringing high E;
-  - a pitch moving at 30 cents a second is trailed by the needle by 2 to 4.5
-    cents (about 0.11 s), and every reading is within 0.7 cent of the truth at
-    the moment it says it describes;
+  - a pitch moving at 30 cents a second is trailed by the needle by 3 to 7.5
+    cents, and it closes the gap within half a second of the pitch coming to
+    rest;
+  - with another string's overtone beating against the note 20 cents away, the
+    needle swings by less than 60 % of what the estimate does;
+  - a string plucked again after the peg was turned is read at its new pitch
+    at once, to within half a cent, with nothing shown during the attack;
   - the spectrogram: a string shows as a stripe at most 11 cents wide within
     1 cent of where it is, on every string; noise, silence and mains hum leave
     the row empty; two strings 30 cents apart show as two stripes;
@@ -556,13 +594,24 @@ been through the engine yet.
 
 ## 8. Limits and next steps
 
-- **The ringing-string fix is verified in simulation only.** The first report
-  from a real phone was that the high E tracked badly even when loud. The
-  simulation reproduced that (and worse: readings dropped out for every string
-  plucked over ringing ones), and the tests above now pass, but whether this
-  was all of what happened on the device has to be confirmed there. Real
-  strings differ from the synthesized ones in ways that matter here: how fast
-  each partial decays, sympathetic vibration, how hard the pluck is.
+- **The fixes for the first report from a phone are verified in simulation
+  only.** The report was that the high E read sharp and the needle jumped
+  about on a ringing note. In simulation, the 50 ms window then used for the
+  high E does exactly that when other strings ring: a G string at half the
+  E's power pulls it 11 cents sharp, wandering between +6 and +18; a D string
+  pulls it flat; all five together make it wander over 25 cents. With the
+  120 ms window the same cases stay within 1 cent. Whether that was all of
+  what happened on the device has to be confirmed there.
+- **A hard pluck really is sharp at first.** A string plucked hard starts
+  above its pitch and settles over about a second; the tuner shows that, as it
+  should, and with the steadied needle it shows it a little longer (a note
+  starting 20 cents sharp reads +12 after 0.4 s where the string is at +7).
+  Tune to where it settles, or pluck gently.
+- **An overtone of another string that sounds next to the note** (a low string
+  20 cents out, set ringing by the pluck) pulls the reading towards it and
+  makes it beat. The needle is steadied against the beating, but the pull
+  itself is real sound and stays: about 4 cents at 12 dB below the note.
+  Damping the other strings removes it.
 - **Two strings equally loud remain ambiguous.** When a ringing string is as
   loud as the one just plucked, and for longer than about 1.5 s after the
   pluck, the tuner may go to the wrong one of two harmonically related
@@ -575,12 +624,6 @@ been through the engine yet.
   to low E, another instrument playing) biases any estimator. The validation
   rejects such frames rather than show a wrong value, so the needle may drop
   out instead.
-- **Plucking shows as a spike in the reading.** For the few frames in which
-  the analysis window holds both the old note and the new attack, the estimate
-  jumps, and with the faster smoothing the needle shows it. On the synthesized
-  test string that is a brief excursion of 10 to 20 cents at each pluck. Real
-  attacks will differ; if it is distracting on a device, the usual remedy is
-  to hold the reading for a few frames after a jump in level.
 - **The spectrogram costs an extra FFT** of up to 32768 points sixteen times a
   second. That is about 1 ms each on a desktop JVM; whether a slow phone keeps
   up is one of the things to measure on a device. `spectrogram.everyBlocks`

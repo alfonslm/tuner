@@ -120,9 +120,16 @@ class FocusedDetector(
         primed = steps.isNotEmpty()
     }
 
-    /** A pluck has just been noticed: what has been sounding until now is background from here on. */
+    /**
+     * The locked string has been plucked again. From here on the whole sound is
+     * measured, with nothing taken away: what was sounding before is now mostly
+     * this same string at the pitch it had before the peg was turned, and
+     * subtracting that from the new note would cut into every one of its
+     * partials from one side and shift the reading by cents.
+     */
     fun pluck() {
-        history?.anchor()
+        primed = false
+        history?.release()
     }
 
     val frameLength: Int get() = analyzer.frameLength
@@ -136,7 +143,7 @@ class FocusedDetector(
         analyzer.powerSpectrum(frame, power)
         buildComb(comb, targetHz, width, model, geometry)
 
-        // First what is new: the string just plucked, without the ones still ringing.
+        // First what is new: the string just plucked, without the ones that were already ringing.
         val history = history
         val fresh = options.fresh
         if (history != null && fresh != null) {

@@ -100,7 +100,9 @@ class WideDetector(
         // A pluck: suddenly much of the spectrum is something that was not there a moment ago.
         val novelty = history.novelty(power)
         if (novelty >= 0) {
-            val settled = frames - anchoredAt >= fresh.guard
+            // One pluck, one onset: while its rise is still within the frames looked back over,
+            // the novelty has nothing new to say.
+            val settled = frames - anchoredAt >= max(fresh.guard, NOVELTY_FRAMES + 2)
             if (settled && novelty - novelties.min() >= fresh.onsetRise && history.anchor()) {
                 anchoredAt = frames
                 onset = true

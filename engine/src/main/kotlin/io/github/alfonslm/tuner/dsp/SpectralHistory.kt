@@ -122,6 +122,11 @@ class SpectralHistory(
         return true
     }
 
+    /** Drops the background: from now on nothing is taken away until the next [anchor]. */
+    fun release() {
+        anchoredAt = NEVER
+    }
+
     /**
      * Writes to [out] the part of [power] that stands above the (fading)
      * background, and returns its share of the total energy; or -1 (leaving

@@ -50,7 +50,8 @@ Requires Android 8.0 (API 26) or newer.
 3. Tap a string button to pin the tuner to it (useful for a string that is far
    off, or in a noisy room). Tap again to release.
 4. The **Smart filter** switch turns the automatic locking off.
-5. The gear button opens **Settings**:
+5. While the tuner is stopped, the gear button (where the Smart filter switch
+   is while it runs) opens **Settings**:
    - *Waterfall*: the history under the meter as a colour spectrogram or as a
      plain line.
    - *Tunings*: switch the standard tunings on and off (Automatic only chooses

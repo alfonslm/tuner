@@ -96,38 +96,24 @@ fun TunerScreen(state: TunerUiState, actions: TunerActions, modifier: Modifier =
         if (state.strings.isNotEmpty()) {
             StringButtons(state.strings, activeId = activeTarget(state)?.id, pinnedId = state.config.pinnedTargetId, actions.onTogglePin)
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-                onClick = actions.onToggleRunning,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(56.dp),
-                shape = RoundedCornerShape(14.dp),
-                border = if (state.running) BorderStroke(1.dp, TunerColors.Line) else null,
-                colors = if (state.running) {
-                    ButtonDefaults.buttonColors(containerColor = TunerColors.Panel, contentColor = TunerColors.Text)
-                } else {
-                    ButtonDefaults.buttonColors()
-                },
-            ) {
-                Text(
-                    stringResource(if (state.running) R.string.stop else R.string.start),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-            val settings = stringResource(R.string.settings)
-            Box(
-                Modifier
-                    .size(56.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(TunerColors.Panel)
-                    .border(1.dp, TunerColors.Line, RoundedCornerShape(14.dp))
-                    .clickable(onClickLabel = settings, role = Role.Button, onClick = actions.onOpenSettings),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Default.Settings, contentDescription = settings, tint = TunerColors.Text)
-            }
+        Button(
+            onClick = actions.onToggleRunning,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+            shape = RoundedCornerShape(14.dp),
+            border = if (state.running) BorderStroke(1.dp, TunerColors.Line) else null,
+            colors = if (state.running) {
+                ButtonDefaults.buttonColors(containerColor = TunerColors.Panel, contentColor = TunerColors.Text)
+            } else {
+                ButtonDefaults.buttonColors()
+            },
+        ) {
+            Text(
+                stringResource(if (state.running) R.string.stop else R.string.start),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
         }
         state.error?.let { error ->
             Text(
@@ -166,14 +152,34 @@ private fun SettingsBar(state: TunerUiState, actions: TunerActions) {
         Labelled(stringResource(R.string.reference_pitch)) {
             ReferencePitchStepper(state.config.a4, actions.onReferencePitch)
         }
-        Labelled(stringResource(R.string.smart_filter)) {
-            val label = stringResource(R.string.smart_filter)
-            Box(Modifier.height(48.dp), contentAlignment = Alignment.Center) {
-                Switch(
-                    checked = state.config.smartFilter == SmartFilterMode.AUTO,
-                    onCheckedChange = actions.onSmartFilter,
-                    modifier = Modifier.semantics { contentDescription = label },
-                )
+        // One place, two uses. While tuning it is the smart-filter switch, the one thing worth
+        // reaching for mid-tune; while stopped it is the way into the settings, which are not.
+        if (state.running) {
+            Labelled(stringResource(R.string.smart_filter)) {
+                val label = stringResource(R.string.smart_filter)
+                Box(Modifier.size(width = 64.dp, height = 48.dp), contentAlignment = Alignment.Center) {
+                    Switch(
+                        checked = state.config.smartFilter == SmartFilterMode.AUTO,
+                        onCheckedChange = actions.onSmartFilter,
+                        modifier = Modifier.semantics { contentDescription = label },
+                    )
+                }
+            }
+        } else {
+            val settings = stringResource(R.string.settings)
+            Labelled(settings) {
+                Box(
+                    Modifier
+                        .size(width = 64.dp, height = 48.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(TunerColors.Panel)
+                        .border(1.dp, TunerColors.Line, RoundedCornerShape(10.dp))
+                        .clickable(onClickLabel = settings, role = Role.Button, onClick = actions.onOpenSettings),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    // The label above already names it.
+                    Icon(Icons.Default.Settings, contentDescription = null, tint = TunerColors.Text)
+                }
             }
         }
     }
