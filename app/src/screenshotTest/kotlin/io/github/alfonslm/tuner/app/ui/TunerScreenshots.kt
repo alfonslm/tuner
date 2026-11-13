@@ -7,6 +7,8 @@ import io.github.alfonslm.tuner.app.PitchTrace
 import io.github.alfonslm.tuner.app.TracePoint
 import io.github.alfonslm.tuner.app.TunerError
 import io.github.alfonslm.tuner.app.TunerUiState
+import io.github.alfonslm.tuner.app.TuningCatalog
+import io.github.alfonslm.tuner.app.WaterfallStyle
 import io.github.alfonslm.tuner.dsp.SPECTRUM_COLUMNS
 import io.github.alfonslm.tuner.engine.LockInfo
 import io.github.alfonslm.tuner.engine.PitchSource
@@ -20,13 +22,17 @@ import io.github.alfonslm.tuner.music.Target
 import io.github.alfonslm.tuner.music.TargetSetOptions
 import io.github.alfonslm.tuner.music.centsToRatio
 import io.github.alfonslm.tuner.music.createTargetSet
-import io.github.alfonslm.tuner.music.instrumentById
+import io.github.alfonslm.tuner.music.STANDARD_TUNINGS
+import io.github.alfonslm.tuner.music.findInstrument
 
 // The screen in each state the tuner can be in, on a phone-sized canvas.
 // `./gradlew :app:updateDebugScreenshotTest` regenerates the reference images,
 // `./gradlew :app:validateDebugScreenshotTest` fails if the UI no longer matches them.
 
-private val NoActions = TunerActions({}, {}, {}, {}, {})
+private val NoActions = TunerActions({}, {}, {}, {}, {}, {})
+private val NoSettingsActions = SettingsActions({}, {}, { _, _ -> }, { null }, { _, _ -> }, { _, _, _ -> }, {}, { _, _ -> }, {})
+
+private fun instrumentById(id: String) = checkNotNull(findInstrument(id, STANDARD_TUNINGS))
 
 private val Guitar = TunerConfig(instrumentId = "guitar")
 
@@ -97,6 +103,7 @@ private fun Screen(
     error: TunerError? = null,
     detected: String? = null,
     trace: PitchTrace = PitchTrace(),
+    style: WaterfallStyle = WaterfallStyle.SPECTROGRAM,
     readings: (List<Target>) -> Pair<TunerReading?, TunerReading?> = { null to null },
 ) {
     val strings = strings(detected ?: config.instrumentId, config.a4)
@@ -110,6 +117,7 @@ private fun Screen(
         latest = latest,
         shown = shown,
         trace = trace,
+        waterfallStyle = style,
     )
     TunerTheme {
         TunerScreen(state, NoActions)
@@ -269,6 +277,49 @@ fun RealEngineOutput() {
     }
     TunerTheme {
         TunerScreen(TunerUiState(Guitar, strings = strings("guitar", 440.0), running = true, latest = latest, shown = shown, trace = trace), NoActions)
+    }
+}
+
+/** The old look: the same history as [LockedSharp], as a line only. */
+@PreviewTest
+@PhonePreview
+@Composable
+fun LineStyle() = Screen(
+    style = WaterfallStyle.LINE,
+    trace = trace { age ->
+        when {
+            age > 7.0 -> null
+            age > 4.6 -> -38.0 + (7.0 - age) * 1.5
+            age > 3.9 -> -34.0 + (4.6 - age) / 0.7 * 26
+            age > 1.8 -> -8.0 + (3.9 - age) * 0.8
+            age > 1.2 -> -6.0 + (1.8 - age) / 0.6 * 20
+            else -> 14.0
+        }
+    }.copy(rows = emptyList()),
+) {
+    val focused = reading(it[1], cents = 14.0, widthCents = 49.0)
+    focused to focused
+}
+
+@PreviewTest
+@PhonePreview
+@Composable
+fun Settings() = TunerTheme {
+    SettingsScreen(TunerUiState(Guitar), NoSettingsActions)
+}
+
+@PreviewTest
+@PhonePreview
+@Composable
+fun SettingsEditingCustomTuning() {
+    val (copied, id) = TuningCatalog.standard.setEnabled("guitar-drop-d", true).duplicate("guitar")
+    val catalog = copied.rename(id!!, "Cigar box").removeString(id, 5).removeString(id, 4).removeString(id, 3).shiftString(id, 0, 3).addString(id)
+    TunerTheme {
+        SettingsScreen(
+            TunerUiState(Guitar.copy(tunings = catalog.inUse), tunings = catalog.tunings, waterfallStyle = WaterfallStyle.LINE),
+            NoSettingsActions,
+            initiallyEditing = id,
+        )
     }
 }
 

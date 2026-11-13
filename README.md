@@ -50,3 +50,9 @@ Requires Android 8.0 (API 26) or newer.
 3. Tap a string button to pin the tuner to it (useful for a string that is far
    off, or in a noisy room). Tap again to release.
 4. The **Smart filter** switch turns the automatic locking off.
+5. The gear button opens **Settings**:
+   - *Waterfall*: the history under the meter as a colour spectrogram or as a
+     plain line.
+   - *Tunings*: switch the standard tunings on and off (Automatic only chooses
+     among those that are on), or **Duplicate** one and edit the copy's name,
+     notes and number of strings to make your own.

@@ -151,6 +151,12 @@ class SpectrogramTest {
     }
 
     @Test
+    fun `no rows are computed when the display does not want them`() {
+        val config = guitar.copy(spectrogram = guitar.spectrogram.copy(enabled = false))
+        assertTrue(rows(run(TunerEngine(SAMPLE_RATE, BLOCK, config), pluckedString(1.5, A2))).isEmpty())
+    }
+
+    @Test
     fun `rows follow the tuner to another string`() {
         val readings = run(TunerEngine(SAMPLE_RATE, BLOCK, guitar), concat(pluckedString(1.5, A2), pluckedString(1.5, detune(146.83, -20.0))))
         val rows = rows(readings)

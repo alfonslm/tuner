@@ -9,6 +9,32 @@
     <string name="reference_raise">Raise reference pitch</string>
     <string name="smart_filter">Smart filter</string>
 
+    <string name="settings">Settings</string>
+    <string name="back">Back</string>
+    <string name="settings_waterfall">Waterfall</string>
+    <string name="waterfall_spectrogram">Spectrogram</string>
+    <string name="waterfall_line">Line</string>
+    <string name="waterfall_spectrogram_hint">The string\'s spectrum over the last seconds, noise removed, coloured green to red by distance from in tune.</string>
+    <string name="waterfall_line_hint">Only the tuner\'s reading over the last seconds, as a line.</string>
+    <string name="settings_tunings">Tunings</string>
+    <string name="tunings_hint">Switch off the ones you don\'t use: Automatic only chooses among those that are on, and recognises them from fewer strings. Duplicate one to make your own.</string>
+    <string name="tuning_custom">Custom</string>
+    <string name="tuning_in_use">Use %1$s</string>
+    <string name="tuning_duplicate">Duplicate</string>
+    <string name="tuning_edit">Edit</string>
+    <string name="tuning_done">Done</string>
+    <string name="tuning_delete">Delete</string>
+    <string name="tuning_name">Name</string>
+    <string name="tuning_string_number">String %1$d</string>
+    <string name="tuning_string_lower">Lower string %1$d by a semitone</string>
+    <string name="tuning_string_raise">Raise string %1$d by a semitone</string>
+    <string name="tuning_string_remove">Remove string %1$d</string>
+    <string name="tuning_string_add">Add string</string>
+    <plurals name="tuning_string_count">
+        <item quantity="one">%1$d string</item>
+        <item quantity="other">%1$d strings</item>
+    </plurals>
+
     <string name="start">Start tuner</string>
     <string name="stop">Stop</string>
     <string name="no_note">–</string>

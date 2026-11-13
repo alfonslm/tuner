@@ -7,12 +7,13 @@ import io.github.alfonslm.tuner.engine.SmartFilterMode
 import io.github.alfonslm.tuner.engine.TunerConfig
 import io.github.alfonslm.tuner.engine.TunerReading
 import io.github.alfonslm.tuner.music.AUTO_INSTRUMENT_ID
-import io.github.alfonslm.tuner.music.INSTRUMENTS
+import io.github.alfonslm.tuner.music.CHROMATIC
 import io.github.alfonslm.tuner.music.InstrumentPreset
 import io.github.alfonslm.tuner.music.Target
 import io.github.alfonslm.tuner.music.TargetSetOptions
+import io.github.alfonslm.tuner.music.automaticPreset
 import io.github.alfonslm.tuner.music.createTargetSet
-import io.github.alfonslm.tuner.music.instrumentById
+import io.github.alfonslm.tuner.music.findInstrument
 import java.util.concurrent.Executors
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.Job
@@ -26,10 +27,14 @@ import kotlinx.coroutines.launch
 
 enum class TunerError { PERMISSION_DENIED, MICROPHONE_UNAVAILABLE }
 
-/** Everything the screen shows. */
+/** Everything the screens show. */
 data class TunerUiState(
     val config: TunerConfig,
-    val instruments: List<InstrumentPreset> = INSTRUMENTS,
+    /** What the instrument picker offers: Automatic, the tunings in use, Chromatic. */
+    val instruments: List<InstrumentPreset> = instrumentsOf(config),
+    /** Every tuning, in use or not, for the settings list. */
+    val tunings: List<Tuning> = TuningCatalog.standard.tunings,
+    val waterfallStyle: WaterfallStyle = WaterfallStyle.SPECTROGRAM,
     /** Automatic mode only: the instrument recognised from the strings played so far, once there is one. */
     val detectedInstrument: InstrumentPreset? = null,
     /** The strings of the instrument being tuned; empty while chromatic (or not yet recognised). */
@@ -47,10 +52,13 @@ data class TunerUiState(
     val live: Boolean get() = latest?.voiced == true
 }
 
+private fun instrumentsOf(config: TunerConfig): List<InstrumentPreset> =
+    listOf(automaticPreset(config.tunings)) + config.tunings + CHROMATIC
+
 /**
- * Owns the tuner's state: settings, whether it is running, and the reading on
- * screen. Starting collects [tunerReadings]; stopping cancels that collection,
- * which releases the microphone.
+ * Owns the tuner's state: settings, the list of tunings, whether it is running,
+ * and the reading on screen. Starting collects [tunerReadings]; stopping
+ * cancels that collection, which releases the microphone.
  */
 class TunerViewModel(
     private val source: AudioSource,
@@ -59,11 +67,31 @@ class TunerViewModel(
         Executors.newSingleThreadExecutor { Thread(it, "tuner-audio") }.asCoroutineDispatcher(),
 ) : ViewModel() {
 
-    private val config = MutableStateFlow(settings.load().toConfig())
-    private val _state = MutableStateFlow(TunerUiState(config.value, strings = stringsOf(config.value, null)))
-    val state: StateFlow<TunerUiState> = _state.asStateFlow()
+    private var catalog: TuningCatalog
+    private var waterfallStyle: WaterfallStyle
+    private val config: MutableStateFlow<TunerConfig>
+    private val _state: MutableStateFlow<TunerUiState>
+    val state: StateFlow<TunerUiState>
 
     private var session: Job? = null
+
+    init {
+        val saved = settings.load()
+        catalog = saved.tunings
+        waterfallStyle = saved.waterfallStyle
+        config = MutableStateFlow(
+            TunerConfig(a4 = saved.a4, smartFilter = saved.smartFilter).withTunings(saved.instrumentId).withWaterfall(),
+        )
+        _state = MutableStateFlow(
+            TunerUiState(
+                config = config.value,
+                tunings = catalog.tunings,
+                waterfallStyle = waterfallStyle,
+                strings = stringsOf(config.value, null),
+            ),
+        )
+        state = _state.asStateFlow()
+    }
 
     /** Call once the RECORD_AUDIO permission has been granted. */
     fun start() {
@@ -85,18 +113,6 @@ class TunerViewModel(
         session = null
         forgetDetection()
         _state.update { it.copy(running = false) }
-    }
-
-    /**
-     * Every session identifies the instrument afresh: a new engine knows nothing
-     * about the last one, and a stale guess is worse than asking for two strings again.
-     */
-    private fun forgetDetection() {
-        // A pinned string belonged to the instrument that had been recognised.
-        if (config.value.instrumentId == AUTO_INSTRUMENT_ID) config.update { it.copy(pinnedTargetId = null) }
-        _state.update {
-            it.copy(config = config.value, detectedInstrument = null, strings = stringsOf(config.value, null), latest = null, shown = null, trace = PitchTrace())
-        }
     }
 
     fun permissionDenied() {
@@ -124,20 +140,96 @@ class TunerViewModel(
     fun togglePin(targetId: String) =
         configure { it.copy(pinnedTargetId = if (it.pinnedTargetId == targetId) null else targetId) }
 
+    fun setWaterfallStyle(style: WaterfallStyle) {
+        waterfallStyle = style
+        configure { it.withWaterfall() }
+    }
+
+    // --- tunings ---
+
+    fun setTuningEnabled(id: String, enabled: Boolean) = changeTunings { it.setEnabled(id, enabled) }
+
+    /** Makes an editable copy of a tuning and returns its id. */
+    fun duplicateTuning(id: String): String? {
+        val (changed, copy) = catalog.duplicate(id)
+        changeTunings { changed }
+        return copy
+    }
+
+    fun renameTuning(id: String, name: String) = changeTunings { it.rename(id, name) }
+
+    fun shiftTuningString(id: String, index: Int, semitones: Int) = changeTunings { it.shiftString(id, index, semitones) }
+
+    fun addTuningString(id: String) = changeTunings { it.addString(id) }
+
+    fun removeTuningString(id: String, index: Int) = changeTunings { it.removeString(id, index) }
+
+    fun deleteTuning(id: String) = changeTunings { it.delete(id) }
+
+    private fun changeTunings(change: (TuningCatalog) -> TuningCatalog) {
+        val changed = change(catalog)
+        if (changed == catalog) return
+        catalog = changed
+        // Strings may have been renumbered or retuned, so a pin cannot be carried over.
+        configure { it.copy(pinnedTargetId = null).withTunings(it.instrumentId) }
+    }
+
+    /** The tunings in use, and an instrument setting that is one of them (else Automatic). */
+    private fun TunerConfig.withTunings(instrumentId: String): TunerConfig {
+        val inUse = catalog.inUse
+        return copy(tunings = inUse, instrumentId = instrumentId.takeIf { findInstrument(it, inUse) != null } ?: AUTO_INSTRUMENT_ID)
+    }
+
+    /** The spectrogram is only computed while it is on show. */
+    private fun TunerConfig.withWaterfall(): TunerConfig =
+        copy(spectrogram = spectrogram.copy(enabled = waterfallStyle == WaterfallStyle.SPECTROGRAM))
+
+    /** Applies a settings change: to the engine (through [config]), to disk, and to the screen. */
     private fun configure(change: (TunerConfig) -> TunerConfig) {
-        val updated = change(config.value)
-        if (updated == config.value) return
+        val previous = config.value
+        val updated = change(previous)
         config.value = updated
-        settings.save(Settings(updated.instrumentId, updated.a4, updated.smartFilter))
-        // Readings taken under the old settings (other instrument, other reference) no longer apply.
+        settings.save(Settings(updated.instrumentId, updated.a4, updated.smartFilter, waterfallStyle, catalog))
+        _state.update { state ->
+            // The recognised instrument may just have been edited, switched off or deleted.
+            val detected = state.detectedInstrument?.let { known -> updated.tunings.find { it == known } }
+            val base = state.copy(
+                config = updated,
+                instruments = instrumentsOf(updated),
+                tunings = catalog.tunings,
+                waterfallStyle = waterfallStyle,
+                detectedInstrument = detected,
+                strings = stringsOf(updated, detected),
+            )
+            // Readings taken under other targets (other instrument, tuning or reference pitch) no longer apply.
+            val sameTargets = updated.instrumentId == previous.instrumentId && updated.a4 == previous.a4 &&
+                updated.tunings == previous.tunings
+            if (sameTargets) base else base.copy(latest = null, shown = null, trace = PitchTrace())
+        }
+    }
+
+    /**
+     * Every session identifies the instrument afresh: a new engine knows nothing
+     * about the last one, and a stale guess is worse than asking for two strings again.
+     */
+    private fun forgetDetection() {
+        // A pinned string belonged to the instrument that had been recognised.
+        if (config.value.instrumentId == AUTO_INSTRUMENT_ID) config.update { it.copy(pinnedTargetId = null) }
         _state.update {
-            it.copy(config = updated, strings = stringsOf(updated, it.detectedInstrument), latest = null, shown = null, trace = PitchTrace())
+            it.copy(
+                config = config.value,
+                detectedInstrument = null,
+                strings = stringsOf(config.value, null),
+                latest = null,
+                shown = null,
+                trace = PitchTrace(),
+            )
         }
     }
 
     private fun show(reading: TunerReading) {
         _state.update { state ->
-            val detected = INSTRUMENTS
+            val detected = state.config.tunings
                 .takeIf { state.config.instrumentId == AUTO_INSTRUMENT_ID && reading.instrumentId != AUTO_INSTRUMENT_ID }
                 ?.find { it.id == reading.instrumentId }
             val held = state.shown?.takeIf { reading.time - it.time < HOLD_SECONDS }
@@ -159,10 +251,8 @@ class TunerViewModel(
         /** How long the last reading stays on screen after the note stops. */
         const val HOLD_SECONDS = 1.5
 
-        fun Settings.toConfig() = TunerConfig(instrumentId = instrumentId, a4 = a4, smartFilter = smartFilter)
-
         fun stringsOf(config: TunerConfig, detected: InstrumentPreset?): List<Target> = createTargetSet(
-            detected ?: instrumentById(config.instrumentId),
+            detected ?: findInstrument(config.instrumentId, config.tunings) ?: automaticPreset(config.tunings),
             config.a4,
             TargetSetOptions(config.wide.rangeMarginCents, config.focus.captureOverlapCents, config.focus.maxCaptureCents),
         ).list.orEmpty()

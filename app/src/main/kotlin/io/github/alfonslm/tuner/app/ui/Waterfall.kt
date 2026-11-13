@@ -6,11 +6,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -20,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.createBitmap
 import io.github.alfonslm.tuner.app.PitchTrace
 import io.github.alfonslm.tuner.app.TracePoint
+import io.github.alfonslm.tuner.app.WaterfallStyle
 import io.github.alfonslm.tuner.dsp.SPECTRUM_COLUMNS
 import io.github.alfonslm.tuner.dsp.SPECTRUM_RANGE_CENTS
 import io.github.alfonslm.tuner.engine.SpectrumRow
@@ -34,22 +37,29 @@ private const val GAP_SECONDS = 0.15
 private const val GRID_SECONDS = 2.0
 
 /**
- * A rolling spectrogram of the string, falling away from the meter: the newest
+ * The recent history of the string, falling away from the meter: the newest
  * moment is at the top, directly under the needle, and older ones move down.
- * It shares the meter's horizontal scale.
+ * It shares the meter's horizontal scale, so something that runs straight down
+ * is a steady pitch and something slanted is a pitch that is changing.
  *
- * Each row is the string's spectrum on that scale with the noise floor removed
- * (the engine's `FoldedSpectrum`), so brightness is energy: a clean note is a
- * narrow stripe, a stiff or dying one a wider and fainter one, a second string
- * a second stripe, and silence is dark. A stripe that runs straight down is a
- * steady pitch; a slanted one is a pitch that is changing.
+ * As a [WaterfallStyle.SPECTROGRAM] each row is the string's spectrum with the
+ * noise floor removed (the engine's `FoldedSpectrum`). Colour says where on
+ * the scale it is - green in tune, through yellow, to red far off - and
+ * brightness says how much energy is there. The background carries the same
+ * colours faintly, so the picture reads as "the lit part of the scale": a
+ * clean note lights a narrow stripe, a stiff or dying one a wider and fainter
+ * one, a second string a second stripe, and silence leaves only the
+ * background. The tuner's reading runs through it as a thin white line.
  *
- * The thin line over it is the tuner's reading at each moment, in the colour
- * the needle had.
+ * As a [WaterfallStyle.LINE] it shows only the reading, in the colour the
+ * needle had at each moment.
  */
 @Composable
-fun Waterfall(trace: PitchTrace, inTuneCents: Float, modifier: Modifier = Modifier) {
-    val spectrogram = remember(trace.rows) { spectrogramImage(trace.rows) }
+fun Waterfall(trace: PitchTrace, style: WaterfallStyle, inTuneCents: Float, modifier: Modifier = Modifier) {
+    val spectral = style == WaterfallStyle.SPECTROGRAM
+    val spectrogram = remember(trace.rows, spectral, inTuneCents) {
+        if (spectral) spectrogramImage(trace.rows, inTuneCents) else null
+    }
 
     // The cents readout already speaks the current value; the history is visual only.
     Canvas(modifier.clearAndSetSemantics { }) {
@@ -59,9 +69,24 @@ fun Waterfall(trace: PitchTrace, inTuneCents: Float, modifier: Modifier = Modifi
         fun x(cents: Float) = centreX + cents / METER_RANGE_CENTS * half
         fun y(time: Double) = ((trace.now - time) / PitchTrace.SECONDS).toFloat() * size.height
 
-        // Where "in tune" is, all the way down.
-        val zoneHalf = inTuneCents / METER_RANGE_CENTS * half
-        drawRect(TunerColors.Good.copy(alpha = 0.08f), Offset(centreX - zoneHalf, 0f), Size(2 * zoneHalf, size.height))
+        if (spectral) {
+            // The scale's colours, faintly, all the way down.
+            val stops = ZONE_STOPS.flatMap { (cents, _) -> listOf(-cents, cents) }.distinct().sorted()
+            drawRect(
+                brush = Brush.horizontalGradient(
+                    colorStops = stops.map { (it + METER_RANGE_CENTS) / (2 * METER_RANGE_CENTS) to zoneColor(it, inTuneCents) }.toTypedArray(),
+                    startX = x(-METER_RANGE_CENTS),
+                    endX = x(METER_RANGE_CENTS),
+                ),
+                topLeft = Offset(x(-METER_RANGE_CENTS), 0f),
+                size = Size(x(METER_RANGE_CENTS) - x(-METER_RANGE_CENTS), size.height),
+                alpha = 0.13f,
+            )
+        } else {
+            // Where "in tune" is, all the way down.
+            val zoneHalf = inTuneCents / METER_RANGE_CENTS * half
+            drawRect(TunerColors.Good.copy(alpha = 0.08f), Offset(centreX - zoneHalf, 0f), Size(2 * zoneHalf, size.height))
+        }
         drawLine(TunerColors.Line, Offset(centreX, 0f), Offset(centreX, size.height), strokeWidth = 1.dp.toPx())
 
         // Time lines every two seconds.
@@ -93,12 +118,12 @@ fun Waterfall(trace: PitchTrace, inTuneCents: Float, modifier: Modifier = Modifi
             }
         }
 
-        // The reading over it.
-        val stroke = 1.5.dp.toPx()
+        // The reading: a fine white thread through the spectrogram, or the whole picture on its own.
+        val stroke = (if (spectral) 1.5.dp else 3.dp).toPx()
         var previous: TracePoint? = null
         for (point in trace.points) {
             val position = Offset(x(point.cents.coerceIn(-METER_RANGE_CENTS, METER_RANGE_CENTS)), y(point.time))
-            val color = traceColor(point).copy(alpha = fade(trace.now - point.time))
+            val color = (if (spectral) Color.White else traceColor(point)).copy(alpha = fade(trace.now - point.time))
             val before = previous
             if (before != null && point.time - before.time <= GAP_SECONDS) {
                 val from = Offset(x(before.cents.coerceIn(-METER_RANGE_CENTS, METER_RANGE_CENTS)), y(before.time))
@@ -111,41 +136,66 @@ fun Waterfall(trace: PitchTrace, inTuneCents: Float, modifier: Modifier = Modifi
     }
 }
 
+/**
+ * How the scale is coloured by distance from the target (cents → colour): green
+ * while in tune, yellow from there to where the needle turns red, red beyond,
+ * blending between them.
+ */
+private val ZONE_STOPS = listOf(
+    0f to TunerColors.Good,
+    10f to TunerColors.Warn,
+    20f to TunerColors.Warn,
+    30f to TunerColors.Bad,
+    METER_RANGE_CENTS to TunerColors.Bad,
+)
+
+private fun zoneColor(cents: Float, inTuneCents: Float): Color {
+    val distance = abs(cents)
+    if (distance <= inTuneCents) return TunerColors.Good
+    val upper = ZONE_STOPS.indexOfFirst { it.first >= distance }.takeIf { it > 0 } ?: return ZONE_STOPS.last().second
+    val (from, fromColor) = ZONE_STOPS[upper - 1]
+    val (to, toColor) = ZONE_STOPS[upper]
+    val start = if (upper == 1) inTuneCents else from
+    return lerp(fromColor, toColor, ((distance - start) / (to - start)).coerceIn(0f, 1f))
+}
+
 private class Spectrogram(val image: ImageBitmap, val newest: Double, val rowSeconds: Double)
 
 /** Paints the rows into a small bitmap (one pixel per cent and per row); scaling it up does the smoothing. */
-private fun spectrogramImage(rows: List<SpectrumRow>): Spectrogram? {
+private fun spectrogramImage(rows: List<SpectrumRow>, inTuneCents: Float): Spectrogram? {
     val newest = rows.lastOrNull() ?: return null
     val height = ceil(PitchTrace.SECONDS / newest.duration).toInt() + 1
+    val centre = (SPECTRUM_COLUMNS - 1) / 2
+    val columnCents = 2 * SPECTRUM_RANGE_CENTS.toFloat() / (SPECTRUM_COLUMNS - 1)
+    val hues = IntArray(SPECTRUM_COLUMNS) { zoneColor((it - centre) * columnCents, inTuneCents).toArgb() and 0x00FFFFFF }
     val pixels = IntArray(SPECTRUM_COLUMNS * height)
     for (row in rows) {
         // Rows sit on a regular time grid; a pause in the stream leaves grid lines empty.
         val line = ((newest.time - row.time) / newest.duration).roundToInt()
         if (line !in 0 until height) continue
-        for (column in 0 until SPECTRUM_COLUMNS) pixels[line * SPECTRUM_COLUMNS + column] = levelColor(row.levels[column])
+        for (column in 0 until SPECTRUM_COLUMNS) pixels[line * SPECTRUM_COLUMNS + column] = levelColor(row.levels[column], hues[column])
     }
     val bitmap = createBitmap(SPECTRUM_COLUMNS, height)
     bitmap.setPixels(pixels, 0, SPECTRUM_COLUMNS, 0, 0, SPECTRUM_COLUMNS, height)
     return Spectrogram(bitmap.asImageBitmap(), newest.time, newest.duration)
 }
 
-private val Glow = TunerColors.Accent.toArgb() and 0x00FFFFFF
-
 /**
- * Energy as light: nothing is transparent, a little is a faint blue haze, a lot
- * is solid and brightens towards white at the very top.
+ * Energy as light, in the colour of that part of the scale: nothing is
+ * transparent (the background shows), more is more solid, and the very top
+ * brightens towards white.
  */
-private fun levelColor(level: Float): Int {
+private fun levelColor(level: Float, hue: Int): Int {
     if (level <= 0.02f) return 0
     val alpha = (level.coerceAtMost(1f) * 255).roundToInt()
-    val white = ((level - 0.75f) / 0.25f).coerceIn(0f, 1f) * 0.6f
-    val r = lerp(Glow shr 16 and 0xFF, 255, white)
-    val g = lerp(Glow shr 8 and 0xFF, 255, white)
-    val b = lerp(Glow and 0xFF, 255, white)
+    val white = ((level - 0.75f) / 0.25f).coerceIn(0f, 1f) * 0.45f
+    val r = mix(hue shr 16 and 0xFF, white)
+    val g = mix(hue shr 8 and 0xFF, white)
+    val b = mix(hue and 0xFF, white)
     return alpha shl 24 or (r shl 16) or (g shl 8) or b
 }
 
-private fun lerp(from: Int, to: Int, fraction: Float): Int = (from + (to - from) * fraction).roundToInt()
+private fun mix(channel: Int, white: Float): Int = (channel + (255 - channel) * white).roundToInt()
 
 private fun traceColor(point: TracePoint): Color = when {
     point.inTune -> TunerColors.Good

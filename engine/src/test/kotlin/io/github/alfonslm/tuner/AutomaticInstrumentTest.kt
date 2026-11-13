@@ -6,7 +6,10 @@ import io.github.alfonslm.tuner.engine.TunerConfig
 import io.github.alfonslm.tuner.engine.TunerEngine
 import io.github.alfonslm.tuner.engine.TunerReading
 import io.github.alfonslm.tuner.music.AUTO_INSTRUMENT_ID
-import io.github.alfonslm.tuner.music.INSTRUMENTS
+import io.github.alfonslm.tuner.music.DEFAULT_TUNINGS
+import io.github.alfonslm.tuner.music.InstrumentPreset
+import io.github.alfonslm.tuner.music.STANDARD_TUNINGS
+import io.github.alfonslm.tuner.dsp.HarmonicModel
 import io.github.alfonslm.tuner.music.InstrumentIdentifier
 import io.github.alfonslm.tuner.music.midiToFrequency
 import io.github.alfonslm.tuner.music.parseNote
@@ -22,7 +25,7 @@ private const val BLOCK = 1024
 private fun hz(note: String) = midiToFrequency(parseNote(note).toDouble())
 
 class InstrumentIdentifierTest {
-    private val stringed = INSTRUMENTS.filter { it.strings != null }
+    private val stringed = DEFAULT_TUNINGS
 
     private fun identify(vararg pitches: Double): String? {
         val identifier = InstrumentIdentifier()
@@ -84,6 +87,31 @@ class InstrumentIdentifierTest {
     @Test
     fun `a misheard note is forgotten once two good ones follow`() {
         assertEquals("guitar", identify(hz("F#5"), hz("E2"), hz("A2")))
+    }
+
+    @Test
+    fun `chooses only among the tunings it is given`() {
+        fun tuning(id: String) = STANDARD_TUNINGS.first { it.id == id }
+        fun identify(tunings: List<InstrumentPreset>, vararg notes: String): String? {
+            val identifier = InstrumentIdentifier(tunings)
+            return notes.map { identifier.observe(hz(it))?.id }.last()
+        }
+
+        // With the guitar switched off, its strings are nobody's.
+        assertNull(identify(listOf(tuning("bass"), tuning("ukulele")), "E2", "A2"))
+
+        // Standard and Drop D differ in one string, so only a pair including it tells them apart.
+        val guitars = listOf(tuning("guitar"), tuning("guitar-drop-d"))
+        assertNull(identify(guitars, "A2", "D3"))
+        assertEquals("guitar", identify(guitars, "E2", "A2"))
+        assertEquals("guitar-drop-d", identify(guitars, "D2", "A2"))
+        // With Drop D alone in use, any pair will do.
+        assertEquals("guitar-drop-d", identify(listOf(tuning("guitar-drop-d")), "A2", "D3"))
+
+        // A custom tuning is a candidate like any other.
+        val custom = InstrumentPreset("custom-1", "Cigar box", listOf("G2", "D3", "G3"), HarmonicModel(8, 5e-5))
+        assertEquals("custom-1", identify(listOf(tuning("bass"), custom), "G2", "D3"))
+        assertNull(identify(emptyList(), "E2", "A2"))
     }
 
     @Test
@@ -172,6 +200,35 @@ class AutomaticInstrumentTest {
         engine.configure(engine.config.copy(instrumentId = "chromatic", pinnedTargetId = null))
         engine.configure(engine.config.copy(instrumentId = AUTO_INSTRUMENT_ID))
         assertEquals(AUTO_INSTRUMENT_ID, run(engine, silence(0.2)).last().instrumentId)
+    }
+
+    @Test
+    fun `automatic mode reaches as low as the tunings in use, and recognises a custom one`() {
+        val fiveString = STANDARD_TUNINGS.first { it.id == "bass-5" }
+        val low = engine(TunerConfig(tunings = listOf(fiveString)))
+        val readings = run(low, strings("B0" to 6.0, "E1" to -4.0, seconds = 2.5))
+        assertEquals("bass-5", readings.last().instrumentId)
+        assertTrue(readings.between(4.5, 5.0).all { it.target?.id == "s1:E1" && abs(it.cents!! + 4) < 1 })
+
+        val cigarBox = InstrumentPreset("custom-1", "Cigar box", listOf("G2", "D3", "G3"), HarmonicModel(8, 5e-5))
+        val custom = run(engine(TunerConfig(tunings = DEFAULT_TUNINGS + cigarBox)), strings("D3" to 3.0, "G3" to -7.0))
+        // D3 and G3 are on a guitar too: undecided, and still tuned chromatically.
+        assertEquals(AUTO_INSTRUMENT_ID, custom.last().instrumentId)
+        val alone = run(engine(TunerConfig(tunings = listOf(cigarBox))), strings("D3" to 3.0, "G3" to -7.0))
+        assertEquals("custom-1", alone.last().instrumentId)
+        assertEquals("s2:G3", alone.last().target?.id)
+    }
+
+    @Test
+    fun `changing the tunings in use starts the identification over, and an instrument no longer in use means automatic`() {
+        val engine = engine()
+        assertEquals("guitar", run(engine, strings("E2" to 0.0, "A2" to 0.0)).last().instrumentId)
+        engine.configure(engine.config.copy(tunings = DEFAULT_TUNINGS.filter { it.id != "guitar" }))
+        assertEquals(AUTO_INSTRUMENT_ID, run(engine, silence(0.2)).last().instrumentId)
+
+        val fixed = engine(TunerConfig(instrumentId = "guitar"))
+        fixed.configure(fixed.config.copy(tunings = DEFAULT_TUNINGS.filter { it.id != "guitar" }))
+        assertEquals(AUTO_INSTRUMENT_ID, fixed.config.instrumentId)
     }
 
     @Test

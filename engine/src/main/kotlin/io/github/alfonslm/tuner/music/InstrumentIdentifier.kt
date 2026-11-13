@@ -23,7 +23,7 @@ import kotlin.math.sqrt
  * @param marginCents how much closer (RMS cents) the best instrument must fit than the runner-up
  */
 class InstrumentIdentifier(
-    private val candidates: List<InstrumentPreset> = INSTRUMENTS.filter { it.strings != null },
+    private val candidates: List<InstrumentPreset> = DEFAULT_TUNINGS,
     private val toleranceCents: Double = 150.0,
     private val marginCents: Double = 40.0,
 ) {

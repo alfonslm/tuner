@@ -208,6 +208,87 @@ class TunerViewModelTest {
     }
 
     @Test
+    fun `the tunings in use decide what can be selected, and a tuning switched off while selected falls back to automatic`() {
+        val settings = MemorySettings(guitar)
+        val viewModel = viewModel(ToneSource(A2), settings)
+        fun offered() = viewModel.state.value.instruments.map { it.id }
+        assertEquals(listOf("auto", "guitar", "bass", "ukulele", "violin", "viola", "cello", "chromatic"), offered())
+
+        viewModel.setTuningEnabled("guitar-drop-d", true)
+        viewModel.setTuningEnabled("viola", false)
+        assertEquals(listOf("auto", "guitar", "guitar-drop-d", "bass", "ukulele", "violin", "cello", "chromatic"), offered())
+        assertEquals("guitar", viewModel.state.value.config.instrumentId)
+
+        viewModel.togglePin(viewModel.state.value.strings[0].id)
+        viewModel.setTuningEnabled("guitar", false)
+        with(viewModel.state.value) {
+            assertEquals("auto", config.instrumentId)
+            assertNull(config.pinnedTargetId)
+            assertTrue(strings.isEmpty())
+            assertTrue(tunings.first { it.id == "guitar" }.let { !it.enabled })
+        }
+        assertEquals("auto", settings.saved.instrumentId)
+        assertEquals(mapOf("guitar-drop-d" to true, "viola" to false, "guitar" to false), settings.saved.tunings.switches)
+    }
+
+    @Test
+    fun `a duplicated tuning can be edited into a custom one, selected, tuned to, and is saved`() {
+        val settings = MemorySettings(guitar)
+        val viewModel = viewModel(ToneSource(A2 * 2.0.pow(-5.0 / 1200)), settings)
+
+        val id = viewModel.duplicateTuning("guitar")!!
+        viewModel.renameTuning(id, "Three string")
+        repeat(3) { viewModel.removeTuningString(id, 3) } // leaves E2 A2 D3
+        viewModel.shiftTuningString(id, 0, -2) // D2 A2 D3
+        viewModel.addTuningString(id) // + G3
+        viewModel.setInstrument(id)
+        with(viewModel.state.value) {
+            assertEquals(id, config.instrumentId)
+            assertEquals(listOf("D2", "A2", "D3", "G3"), strings.map { it.label })
+            assertTrue(instruments.any { it.id == id && it.name == "Three string" })
+        }
+
+        viewModel.start()
+        val state = viewModel.await("locked on the custom tuning's A string") { it.shown?.source == PitchSource.FOCUSED }
+        assertEquals("s1:A2", state.shown!!.target!!.id)
+        assertTrue(abs(state.shown.cents!! + 5) < 1)
+
+        // Retuning a string of the tuning in use takes effect while running.
+        viewModel.shiftTuningString(id, 1, 1) // A2 -> A#2: the same tone is now nearly a semitone flat
+        val retuned = viewModel.await("reading against A#2") { it.shown?.target?.label == "A#2" && it.live }
+        assertTrue(abs(retuned.shown!!.cents!! + 105) < 2, "cents: ${retuned.shown.cents}")
+        viewModel.stop()
+
+        // A new view model on the same store gets the tuning back, still selected.
+        val again = viewModel(ToneSource(A2), settings)
+        assertEquals(id, again.state.value.config.instrumentId)
+        assertEquals(listOf("D2", "A#2", "D3", "G3"), again.state.value.strings.map { it.label })
+
+        again.deleteTuning(id)
+        assertEquals("auto", again.state.value.config.instrumentId)
+        assertTrue(again.state.value.tunings.none { it.custom })
+    }
+
+    @Test
+    fun `the line style switches the spectrogram off, the spectrogram style back on`() {
+        val settings = MemorySettings(guitar)
+        val viewModel = viewModel(ToneSource(A2), settings)
+        assertEquals(WaterfallStyle.SPECTROGRAM, viewModel.state.value.waterfallStyle)
+        viewModel.setWaterfallStyle(WaterfallStyle.LINE)
+        assertEquals(WaterfallStyle.LINE, settings.saved.waterfallStyle)
+
+        viewModel.start()
+        val line = viewModel.await("a second of line") { it.trace.points.size >= 40 }
+        assertTrue(line.trace.rows.isEmpty())
+
+        viewModel.setWaterfallStyle(WaterfallStyle.SPECTROGRAM)
+        val spectral = viewModel.await("spectrogram rows") { it.trace.rows.size >= 5 }
+        assertEquals(WaterfallStyle.SPECTROGRAM, spectral.waterfallStyle)
+        assertTrue(spectral.trace.points.isNotEmpty()) // the change of style did not wipe the history
+        viewModel.stop()
+    }
+
+    @Test
     fun `settings are restored, saved on change, and a pin does not outlive its instrument`() {
         val settings = MemorySettings(Settings(instrumentId = "violin", a4 = 442.0, smartFilter = SmartFilterMode.OFF))
         val viewModel = viewModel(ToneSource(A2), settings)

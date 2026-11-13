@@ -2,6 +2,8 @@ package io.github.alfonslm.tuner.engine
 
 import io.github.alfonslm.tuner.music.DEFAULT_A4
 import io.github.alfonslm.tuner.music.DEFAULT_INSTRUMENT_ID
+import io.github.alfonslm.tuner.music.DEFAULT_TUNINGS
+import io.github.alfonslm.tuner.music.InstrumentPreset
 
 enum class SmartFilterMode {
     /** Listen wide-band, then switch to the target-aware harmonic filter once a note has been stable. */
@@ -12,7 +14,13 @@ enum class SmartFilterMode {
 }
 
 data class TunerConfig(
+    /** Automatic, chromatic, or the id of one of [tunings]. */
     val instrumentId: String = DEFAULT_INSTRUMENT_ID,
+    /**
+     * The tunings in use: the ones that can be selected, and the candidates
+     * automatic mode chooses among. Standard and custom ones alike.
+     */
+    val tunings: List<InstrumentPreset> = DEFAULT_TUNINGS,
     val a4: Double = DEFAULT_A4,
     val smartFilter: SmartFilterMode = SmartFilterMode.AUTO,
     /** Target the user fixed by hand; the filter then stays on it regardless of what is heard. */
@@ -88,6 +96,8 @@ data class DisplayConfig(
 
 /** The rolling spectrogram under the meter; see `FoldedSpectrum`. */
 data class SpectrogramConfig(
+    /** Off when the display does not show it; saves the extra analysis. */
+    val enabled: Boolean = true,
     /** A row is computed every this many audio blocks (3 ≈ 16 rows per second). */
     val everyBlocks: Int = 3,
     /** Analysis window in periods of the target note: the stripe is about 400 / (periods · 8) cents wide at best. */

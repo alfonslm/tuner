@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -11,6 +12,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -23,6 +27,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.alfonslm.tuner.app.audio.MicrophoneSource
+import io.github.alfonslm.tuner.app.ui.SettingsActions
+import io.github.alfonslm.tuner.app.ui.SettingsScreen
 import io.github.alfonslm.tuner.app.ui.TunerActions
 import io.github.alfonslm.tuner.app.ui.TunerScreen
 import io.github.alfonslm.tuner.app.ui.TunerTheme
@@ -67,6 +73,8 @@ private fun TunerApp(viewModel: TunerViewModel = viewModel(factory = TunerViewMo
         onDispose { view.keepScreenOn = false }
     }
 
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+
     val actions = remember(viewModel, context) {
         TunerActions(
             onToggleRunning = {
@@ -82,7 +90,28 @@ private fun TunerApp(viewModel: TunerViewModel = viewModel(factory = TunerViewMo
             onReferencePitch = viewModel::setReferencePitch,
             onSmartFilter = viewModel::setSmartFilter,
             onTogglePin = viewModel::togglePin,
+            onOpenSettings = { showSettings = true },
         )
     }
-    TunerScreen(state, actions)
+    val settingsActions = remember(viewModel) {
+        SettingsActions(
+            onBack = { showSettings = false },
+            onWaterfallStyle = viewModel::setWaterfallStyle,
+            onTuningEnabled = viewModel::setTuningEnabled,
+            onDuplicateTuning = viewModel::duplicateTuning,
+            onRenameTuning = viewModel::renameTuning,
+            onShiftString = viewModel::shiftTuningString,
+            onAddString = viewModel::addTuningString,
+            onRemoveString = viewModel::removeTuningString,
+            onDeleteTuning = viewModel::deleteTuning,
+        )
+    }
+
+    // Two screens do not need a navigation library: settings simply covers the tuner, which keeps running.
+    if (showSettings) {
+        BackHandler { showSettings = false }
+        SettingsScreen(state, settingsActions)
+    } else {
+        TunerScreen(state, actions)
+    }
 }

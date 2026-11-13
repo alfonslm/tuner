@@ -20,7 +20,8 @@ import io.github.alfonslm.tuner.music.TargetSetOptions
 import io.github.alfonslm.tuner.music.centsBetween
 import io.github.alfonslm.tuner.music.centsToRatio
 import io.github.alfonslm.tuner.music.createTargetSet
-import io.github.alfonslm.tuner.music.instrumentById
+import io.github.alfonslm.tuner.music.automaticPreset
+import io.github.alfonslm.tuner.music.findInstrument
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.log10
@@ -95,7 +96,7 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
     private var blocks = 0L
 
     /** Automatic mode: the instrument recognised from the strings heard so far. */
-    private val identifier = InstrumentIdentifier()
+    private var identifier = InstrumentIdentifier(config.tunings)
     private var identified: InstrumentPreset? = null
 
     init {
@@ -105,9 +106,13 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
     /**
      * Replaces the configuration. The current lock is dropped; audio history is
      * kept, and so is an automatically identified instrument unless the
-     * configured instrument changed.
+     * configured instrument or the tunings to choose among changed.
      */
     fun configure(config: TunerConfig) {
+        if (config.tunings != this.config.tunings) {
+            identifier = InstrumentIdentifier(config.tunings)
+            identified = null
+        }
         if (config.instrumentId != this.config.instrumentId) forgetInstrument()
         this.config = config
         rebuild()
@@ -183,7 +188,7 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
      */
     private fun spectrumRow(time: Double, audible: Boolean, target: Target?): SpectrumRow? {
         val options = config.spectrogram
-        if (blocks++ % options.everyBlocks != 0L || target == null) return null
+        if (!options.enabled || blocks++ % options.everyBlocks != 0L || target == null) return null
         var analysis = spectrum
         if (analysis == null || spectrumTargetId != target.id) {
             analysis = FoldedSpectrum(
@@ -335,7 +340,10 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
     }
 
     private fun rebuild() {
-        preset = identified ?: instrumentById(config.instrumentId)
+        // An instrument setting that names no tuning in use (it was switched off or deleted) means automatic.
+        val configured = findInstrument(config.instrumentId, config.tunings)
+        if (configured == null) config = config.copy(instrumentId = AUTO_INSTRUMENT_ID, pinnedTargetId = null)
+        preset = identified ?: configured ?: automaticPreset(config.tunings)
         targets = createTargetSet(
             preset,
             config.a4,

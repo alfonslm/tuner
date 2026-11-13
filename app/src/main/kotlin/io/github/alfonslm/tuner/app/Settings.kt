@@ -5,13 +5,23 @@ import androidx.core.content.edit
 import io.github.alfonslm.tuner.engine.SmartFilterMode
 import io.github.alfonslm.tuner.music.DEFAULT_A4
 import io.github.alfonslm.tuner.music.DEFAULT_INSTRUMENT_ID
-import io.github.alfonslm.tuner.music.INSTRUMENTS
+
+/** What the waterfall under the meter shows. */
+enum class WaterfallStyle {
+    /** The rolling spectrogram, coloured by how far from in tune each part of the scale is. */
+    SPECTROGRAM,
+
+    /** Only the reading, as a line. */
+    LINE,
+}
 
 /** The choices that survive closing the app. A pinned string deliberately does not. */
 data class Settings(
     val instrumentId: String = DEFAULT_INSTRUMENT_ID,
     val a4: Double = DEFAULT_A4,
     val smartFilter: SmartFilterMode = SmartFilterMode.AUTO,
+    val waterfallStyle: WaterfallStyle = WaterfallStyle.SPECTROGRAM,
+    val tunings: TuningCatalog = TuningCatalog.standard,
 )
 
 interface SettingsStore {
@@ -25,12 +35,17 @@ class PreferencesSettingsStore(context: Context) : SettingsStore {
 
     override fun load(): Settings {
         val defaults = Settings()
-        val instrumentId = preferences.getString(KEY_INSTRUMENT, null)
+        val switches = preferences.getStringSet(KEY_TUNING_SWITCHES, emptySet()).orEmpty()
+            .mapNotNull { entry -> entry.split("=").takeIf { it.size == 2 }?.let { it[0] to (it[1] == "1") } }
+            .toMap()
         return Settings(
-            // A preset saved by an older version may no longer exist.
-            instrumentId = instrumentId?.takeIf { id -> INSTRUMENTS.any { it.id == id } } ?: defaults.instrumentId,
+            // Whether the instrument is still in use is checked against the tunings by the view model.
+            instrumentId = preferences.getString(KEY_INSTRUMENT, null) ?: defaults.instrumentId,
             a4 = preferences.getFloat(KEY_A4, defaults.a4.toFloat()).toDouble().coerceIn(A4_RANGE),
             smartFilter = if (preferences.getBoolean(KEY_FILTER, true)) SmartFilterMode.AUTO else SmartFilterMode.OFF,
+            waterfallStyle = WaterfallStyle.entries.find { it.name == preferences.getString(KEY_WATERFALL, null) }
+                ?: defaults.waterfallStyle,
+            tunings = TuningCatalog.restore(switches, preferences.getString(KEY_CUSTOM_TUNINGS, null).orEmpty()),
         )
     }
 
@@ -39,6 +54,9 @@ class PreferencesSettingsStore(context: Context) : SettingsStore {
             putString(KEY_INSTRUMENT, settings.instrumentId)
             putFloat(KEY_A4, settings.a4.toFloat())
             putBoolean(KEY_FILTER, settings.smartFilter == SmartFilterMode.AUTO)
+            putString(KEY_WATERFALL, settings.waterfallStyle.name)
+            putStringSet(KEY_TUNING_SWITCHES, settings.tunings.switches.map { (id, on) -> "$id=${if (on) 1 else 0}" }.toSet())
+            putString(KEY_CUSTOM_TUNINGS, settings.tunings.encodeCustom())
         }
     }
 
@@ -46,6 +64,9 @@ class PreferencesSettingsStore(context: Context) : SettingsStore {
         const val KEY_INSTRUMENT = "instrument"
         const val KEY_A4 = "a4"
         const val KEY_FILTER = "smartFilter"
+        const val KEY_WATERFALL = "waterfall"
+        const val KEY_TUNING_SWITCHES = "tuningSwitches"
+        const val KEY_CUSTOM_TUNINGS = "customTunings"
     }
 }
 

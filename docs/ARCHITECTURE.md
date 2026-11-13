@@ -76,19 +76,32 @@ web page: browsers only *request* that processing be turned off.
 
 - **The meter**: a ±50 cent scale with a needle, coloured by how close the
   string is.
-- **The waterfall** under it: a rolling spectrogram of the last eight seconds
-  on the same horizontal scale, newest at the top and moving down. Each row is
-  the string's spectrum with the noise floor removed, so brightness is energy:
-  a clean note is a narrow stripe, a stiff or dying one a wider and fainter
-  one, a second string a second stripe, and silence is dark. A stripe running
-  straight down is a steady pitch, a slanted one a pitch that is changing, so
-  the player sees how far a turn of the peg moved the string and whether a
-  note drifts as it rings. A thin line over it is the tuner's reading at each
-  moment, in the colour the needle had. The picture belongs to one string and
-  starts over when the tuner moves to another.
+- **The waterfall** under it: the last eight seconds on the same horizontal
+  scale, newest at the top and moving down, in one of two styles chosen in the
+  settings.
+  - *Spectrogram* (the default): each row is the string's spectrum with the
+    noise floor removed. Colour says where on the scale it is (green in tune,
+    through yellow, to red far off) and brightness says how much energy is
+    there; the background carries the same colours faintly. A clean note
+    lights a narrow stripe, a stiff or dying one a wider and fainter one, a
+    second string a second stripe, and silence leaves only the background. The
+    tuner's reading runs through it as a thin white line.
+  - *Line*: only the reading, in the colour the needle had at each moment.
+
+  Either way, something running straight down is a steady pitch and something
+  slanted is a pitch that is changing, so the player sees how far a turn of
+  the peg moved the string and whether a note drifts as it rings. The picture
+  belongs to one string and starts over when the tuner moves to another.
 - **The note name**: large while the tuner is chromatic (it is then the main
   information), small once the instrument is known, because the row of string
   buttons already highlights which string is sounding.
+
+A second screen, **Settings**, holds the waterfall style and the list of
+tunings: every standard tuning with a switch that puts it in or out of use,
+and a *Duplicate* button that makes an editable copy (name, the note of each
+string, more or fewer strings). Only the tunings in use appear in the
+instrument picker and are candidates for automatic recognition. Changes apply
+at once, also to a running tuner, and are saved.
 
 ## 2. Module map
 
@@ -110,7 +123,7 @@ engine/src/main/kotlin/io/github/alfonslm/tuner/
     FoldedSpectrum.kt       one row of the spectrogram: partials folded onto a cents scale
   music/
     Notes.kt                Hz ↔ MIDI ↔ names, cents
-    Instruments.kt          presets: strings + harmonic model per instrument
+    Instruments.kt          the standard tunings: strings + harmonic model each
     InstrumentIdentifier.kt automatic mode: which instrument do these strings belong to?
     Targets.kt              TargetSet: the notes the tuner snaps to
 engine/src/test/            synthetic plucked strings, DSP and engine scenarios
@@ -121,11 +134,13 @@ app/src/main/kotlin/io/github/alfonslm/tuner/app/
   TunerPipeline.kt          AudioSource + config → Flow<TunerReading>
   TunerViewModel.kt         UI state, start/stop, settings changes
   PitchTrace.kt             the last 8 s of spectrogram rows and readings
+  Tunings.kt                the user's tuning list: switch, duplicate, edit, save
   Settings.kt               persisted choices (SharedPreferences)
   MainActivity.kt           permission, lifecycle, keep-screen-on
-  ui/TunerScreen.kt         the screen
+  ui/TunerScreen.kt         the tuner screen
+  ui/SettingsScreen.kt      waterfall style and the tuning list
   ui/Meter.kt               the cents scale and needle
-  ui/Waterfall.kt           the rolling spectrogram under the meter
+  ui/Waterfall.kt           the history under the meter, as spectrogram or line
   ui/Theme.kt               colours
 app/src/test/               the pipeline driven by a synthetic microphone
 ```
@@ -337,7 +352,13 @@ doing.
 ### Recognising the instrument
 
 The default instrument is **Automatic**: the player should not have to say
-what they are holding, because the strings give it away.
+what they are holding, because the strings give it away. It chooses among the
+tunings in use (`TunerConfig.tunings`), which the user controls in the
+settings: by default one per instrument (guitar, bass, ukulele, violin, viola,
+cello). The alternates that ship with the app (Drop D, half step down, DADGAD,
+Open G, 7-string, 5-string bass, mandolin, banjo) start switched off, because
+a tuning that shares most strings with another makes recognition wait for the
+string that differs. Custom tunings are candidates like any other.
 
 One string says little — G3 is on a guitar, a violin and a viola. Two
 different strings almost always settle it, because instruments differ both in
@@ -345,7 +366,7 @@ register and in the interval between neighbouring strings (fourths on a guitar
 or bass, fifths in the violin family).
 
 1. Until the instrument is known, the engine behaves as a chromatic tuner
-   whose range spans every instrument (E1 to C6). It is fully usable in this
+   whose range spans the tunings in use (E1 to C6 by default). It is fully usable in this
    state: notes are shown and locked onto as semitones.
 2. Each time a note settles (the same trigger that engages the lock), its
    pitch goes to `InstrumentIdentifier`. That keeps the two most recent
@@ -383,14 +404,15 @@ ones that shape behaviour:
 | `wide.minClarity` | 0.85 | periodicity needed for a wide-band reading |
 | `display.inTuneCents` / `inTuneHoldMs` | 3 / 400 | when the display turns green |
 
-Instrument knowledge lives in `music/Instruments.kt`: adding an instrument or
-an alternate tuning is one entry (string notes + harmonic model).
+The standard tunings live in `music/Instruments.kt` (string notes + harmonic
+model each); adding one there is one entry. The user's own are made in the
+app and reach the engine the same way, as entries of `TunerConfig.tunings`.
 
 ## 7. What has been verified
 
 `./gradlew test` needs no device. It runs:
 
-- **51 engine tests** against a plucked-string synthesizer (inharmonic
+- **55 engine tests** against a plucked-string synthesizer (inharmonic
   partials with individual decay, weak fundamental, white noise, mains hum):
   - each guitar string is identified, locked within 0.5 s of the pluck, and
     read to within 0.3 cent;
@@ -408,21 +430,30 @@ an alternate tuning is one entry (string notes + harmonic model).
   - automatic mode: every pair of strings of every preset identifies its
     instrument (or stays undecided where two instruments share the pair), and
     the engine recognises guitar, bass, ukulele, violin, viola and cello from
-    two plucked strings (a guitar within half a second of the second pluck).
-- **12 app tests**. Six drive the real pipeline (view model → flow → engine)
-  with a synthetic microphone: a tone gets locked and shown, its spectrogram
-  rows arrive without a gap, stopping closes the stream, a microphone that
-  fails to open is reported, settings changes reach the running engine,
-  settings persist, and automatic mode recognises a guitar and offers its
-  strings. Six cover the waterfall's history: it collects readings and rows,
-  runs on through silence, forgets what is older than its window, and starts
-  over on another string.
+    two plucked strings (a guitar within half a second of the second pluck);
+    it chooses only among the tunings in use, tells standard from Drop D by
+    the low string, reaches down to the B0 of a 5-string bass when that is in
+    use, and recognises a custom tuning.
+- **23 app tests**.
+  - Nine drive the real pipeline (view model → flow → engine) with a synthetic
+    microphone: a tone gets locked and shown, its spectrogram rows arrive
+    without a gap, stopping closes the stream, a microphone that fails to open
+    is reported, settings changes reach the running engine, settings persist,
+    automatic mode recognises a guitar and offers its strings, a tuning
+    switched off while selected falls back to automatic, a duplicated and
+    edited tuning can be selected and tuned to (and retuned while running),
+    and the line style switches the spectrogram analysis off.
+  - Eight cover the tuning list: switching, duplicating, editing within
+    limits, standard tunings being read-only, and saving and restoring
+    (including damaged saved data).
+  - Six cover the waterfall's history.
 
 `./gradlew :app:validateDebugScreenshotTest` renders the Compose screen on
-the JVM in twelve states (idle, searching, locked sharp, in tune, held
-reading, pinned, chromatic with the filter off, permission denied, three of
-automatic mode, and one fed by the real engine on a synthesized string being
-tuned up) and compares them
+the JVM in fifteen states (the tuner idle, searching, locked sharp, in tune,
+with a held reading, pinned, chromatic with the filter off, with permission
+denied, in three stages of automatic mode, in the line style, and fed by the
+real engine on a synthesized string being tuned up; the settings screen as it
+opens and with a custom tuning being edited) and compares them
 with the reference images in `app/src/screenshotTestDebug/reference`. After an
 intentional UI change, regenerate them with `:app:updateDebugScreenshotTest`.
 
@@ -448,11 +479,13 @@ been through the engine yet.
   and `spectrogram.periods` trade smoothness and sharpness for CPU.
 - **Inharmonicity is assumed, not measured.** Fitting `B` per string from the
   observed partials would remove the remaining ≈0.5 cent bias.
-- **Automatic mode knows standard tunings only.** An instrument tuned a full
-  semitone away from standard is ambiguous by pitch alone (E♭2 and A♭2 fit a
-  bass's D2 and G2 as well as a guitar's E2 and A2), so it is left undecided
-  and the tuner simply stays chromatic. Alternate tunings would be added as
-  presets and become candidates automatically.
+- **Automatic mode goes by absolute pitch.** An instrument tuned a full
+  semitone away from the tunings in use is ambiguous by pitch alone (E♭2 and
+  A♭2 fit a bass's D2 and G2 as well as a guitar's E2 and A2), so it is left
+  undecided and the tuner simply stays chromatic. Switching the matching
+  tuning on, or making it, resolves that.
+- **A custom tuning keeps the overtone model of the tuning it was copied
+  from.** Only its name, notes and number of strings can be edited.
 - **Automatic mode reacts a little later to the first string** than a fixed
   instrument does: until it knows the instrument it has to analyse windows
   long enough for a bass.

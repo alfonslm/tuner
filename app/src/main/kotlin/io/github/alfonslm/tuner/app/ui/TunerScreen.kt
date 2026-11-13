@@ -23,10 +23,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -75,6 +78,7 @@ class TunerActions(
     val onReferencePitch: (Double) -> Unit,
     val onSmartFilter: (Boolean) -> Unit,
     val onTogglePin: (String) -> Unit,
+    val onOpenSettings: () -> Unit,
 )
 
 @Composable
@@ -92,24 +96,38 @@ fun TunerScreen(state: TunerUiState, actions: TunerActions, modifier: Modifier =
         if (state.strings.isNotEmpty()) {
             StringButtons(state.strings, activeId = activeTarget(state)?.id, pinnedId = state.config.pinnedTargetId, actions.onTogglePin)
         }
-        Button(
-            onClick = actions.onToggleRunning,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp),
-            shape = RoundedCornerShape(14.dp),
-            border = if (state.running) BorderStroke(1.dp, TunerColors.Line) else null,
-            colors = if (state.running) {
-                ButtonDefaults.buttonColors(containerColor = TunerColors.Panel, contentColor = TunerColors.Text)
-            } else {
-                ButtonDefaults.buttonColors()
-            },
-        ) {
-            Text(
-                stringResource(if (state.running) R.string.stop else R.string.start),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-            )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = actions.onToggleRunning,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(56.dp),
+                shape = RoundedCornerShape(14.dp),
+                border = if (state.running) BorderStroke(1.dp, TunerColors.Line) else null,
+                colors = if (state.running) {
+                    ButtonDefaults.buttonColors(containerColor = TunerColors.Panel, contentColor = TunerColors.Text)
+                } else {
+                    ButtonDefaults.buttonColors()
+                },
+            ) {
+                Text(
+                    stringResource(if (state.running) R.string.stop else R.string.start),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            val settings = stringResource(R.string.settings)
+            Box(
+                Modifier
+                    .size(56.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(TunerColors.Panel)
+                    .border(1.dp, TunerColors.Line, RoundedCornerShape(14.dp))
+                    .clickable(onClickLabel = settings, role = Role.Button, onClick = actions.onOpenSettings),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Default.Settings, contentDescription = settings, tint = TunerColors.Text)
+            }
         }
         state.error?.let { error ->
             Text(
@@ -282,6 +300,7 @@ private fun Display(state: TunerUiState, modifier: Modifier = Modifier) {
                 )
                 Waterfall(
                     trace = state.trace,
+                    style = state.waterfallStyle,
                     inTuneCents = state.config.display.inTuneCents.toFloat(),
                     modifier = Modifier
                         .fillMaxWidth()
