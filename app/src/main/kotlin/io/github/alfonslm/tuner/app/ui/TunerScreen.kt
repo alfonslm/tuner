@@ -253,26 +253,40 @@ private fun Display(state: TunerUiState, modifier: Modifier = Modifier) {
         border = BorderStroke(1.dp, TunerColors.Line),
     ) {
         Column(
-            Modifier.padding(horizontal = 16.dp, vertical = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp, Alignment.CenterVertically),
+            Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // Once the instrument is known the string buttons say which string this is,
+            // so the name steps back and leaves the room to the meter and its history.
+            val noteSize = if (state.strings.isEmpty()) 104.sp else 44.sp
             Text(
                 activeTarget(state)?.label ?: stringResource(R.string.no_note),
                 modifier = Modifier
                     .fillMaxWidth()
                     .alpha(readingAlpha),
                 color = tone,
-                fontSize = 112.sp,
-                lineHeight = 112.sp,
+                fontSize = noteSize,
+                lineHeight = noteSize,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
             )
-            Meter(
-                cents = cents?.toFloat(),
-                tone = tone,
-                inTuneCents = state.config.display.inTuneCents.toFloat(),
-                dimmed = !state.live,
-            )
+            Column(Modifier.weight(1f)) {
+                Meter(
+                    cents = cents?.toFloat(),
+                    tone = tone,
+                    inTuneCents = state.config.display.inTuneCents.toFloat(),
+                    dimmed = !state.live,
+                )
+                Waterfall(
+                    trace = state.trace,
+                    inTuneCents = state.config.display.inTuneCents.toFloat(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                )
+            }
             Row(
                 Modifier
                     .fillMaxWidth()

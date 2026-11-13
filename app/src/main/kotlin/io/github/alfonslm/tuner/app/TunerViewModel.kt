@@ -40,6 +40,8 @@ data class TunerUiState(
     val latest: TunerReading? = null,
     /** What the display shows: the latest pitched reading, held briefly after the note stops. */
     val shown: TunerReading? = null,
+    /** The last few seconds of readings, for the waterfall. */
+    val trace: PitchTrace = PitchTrace(),
 ) {
     /** True while a pitch is being measured right now (as opposed to a held reading). */
     val live: Boolean get() = latest?.voiced == true
@@ -93,7 +95,7 @@ class TunerViewModel(
         // A pinned string belonged to the instrument that had been recognised.
         if (config.value.instrumentId == AUTO_INSTRUMENT_ID) config.update { it.copy(pinnedTargetId = null) }
         _state.update {
-            it.copy(config = config.value, detectedInstrument = null, strings = stringsOf(config.value, null), latest = null, shown = null)
+            it.copy(config = config.value, detectedInstrument = null, strings = stringsOf(config.value, null), latest = null, shown = null, trace = PitchTrace())
         }
     }
 
@@ -129,7 +131,7 @@ class TunerViewModel(
         settings.save(Settings(updated.instrumentId, updated.a4, updated.smartFilter))
         // Readings taken under the old settings (other instrument, other reference) no longer apply.
         _state.update {
-            it.copy(config = updated, strings = stringsOf(updated, it.detectedInstrument), latest = null, shown = null)
+            it.copy(config = updated, strings = stringsOf(updated, it.detectedInstrument), latest = null, shown = null, trace = PitchTrace())
         }
     }
 
@@ -144,6 +146,7 @@ class TunerViewModel(
                 strings = if (detected != state.detectedInstrument) stringsOf(state.config, detected) else state.strings,
                 latest = reading,
                 shown = if (reading.voiced) reading else held,
+                trace = state.trace.add(reading),
             )
         }
     }

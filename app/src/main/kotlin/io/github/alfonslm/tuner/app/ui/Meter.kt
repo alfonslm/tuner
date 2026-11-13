@@ -24,6 +24,9 @@ import androidx.compose.ui.unit.dp
 /** Cents shown from the centre to either end of the scale. */
 const val METER_RANGE_CENTS = 50f
 
+/** Space left at either end of the scale; the waterfall below uses the same so the two line up. */
+val METER_INSET = 2.dp
+
 /**
  * A linear cents scale with a moving needle. The green zone marks the in-tune
  * tolerance; readings beyond the scale rest against its end.
@@ -52,7 +55,7 @@ fun Meter(cents: Float?, tone: Color, inTuneCents: Float, dimmed: Boolean, modif
                 .fillMaxWidth()
                 .height(44.dp),
         ) {
-            val inset = 2.dp.toPx()
+            val inset = METER_INSET.toPx()
             val half = size.width / 2 - inset
             val centreX = size.width / 2
             val centreY = size.height / 2

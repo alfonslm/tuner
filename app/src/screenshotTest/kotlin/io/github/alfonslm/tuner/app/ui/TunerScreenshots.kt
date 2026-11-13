@@ -3,6 +3,8 @@ package io.github.alfonslm.tuner.app.ui
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
 import com.android.tools.screenshot.PreviewTest
+import io.github.alfonslm.tuner.app.PitchTrace
+import io.github.alfonslm.tuner.app.TracePoint
 import io.github.alfonslm.tuner.app.TunerError
 import io.github.alfonslm.tuner.app.TunerUiState
 import io.github.alfonslm.tuner.engine.LockInfo
@@ -51,12 +53,25 @@ private fun reading(
     lock = if (locked) LockInfo(target, pinned, widthCents) else null,
 )
 
+/**
+ * A history ending now (t = 10 s): `cents(age)` gives the offset `age` seconds ago,
+ * or null where no note was sounding.
+ */
+private fun trace(inTuneBelow: Float = 3f, cents: (age: Double) -> Double?): PitchTrace {
+    val points = (0..(PitchTrace.SECONDS * 47).toInt()).mapNotNull { step ->
+        val age = PitchTrace.SECONDS - step / 47.0
+        cents(age)?.let { TracePoint(10.0 - age, it.toFloat(), kotlin.math.abs(it) <= inTuneBelow) }
+    }
+    return PitchTrace("preview", points, now = 10.0)
+}
+
 @Composable
 private fun Screen(
     config: TunerConfig = Guitar,
     running: Boolean = true,
     error: TunerError? = null,
     detected: String? = null,
+    trace: PitchTrace = PitchTrace(),
     readings: (List<Target>) -> Pair<TunerReading?, TunerReading?> = { null to null },
 ) {
     val strings = strings(detected ?: config.instrumentId, config.a4)
@@ -69,6 +84,7 @@ private fun Screen(
         error = error,
         latest = latest,
         shown = shown,
+        trace = trace,
     )
     TunerTheme {
         TunerScreen(state, NoActions)
@@ -87,7 +103,7 @@ fun Idle() = Screen(config = TunerConfig(), running = false)
 @PreviewTest
 @PhonePreview
 @Composable
-fun SearchingWideBand() = Screen {
+fun SearchingWideBand() = Screen(trace = trace { age -> (-22.0 + 3 * kotlin.math.sin(age * 9)).takeIf { age < 0.4 } }) {
     val wide = reading(it[1], cents = -22.0, source = PitchSource.WIDE, locked = false)
     wide to wide
 }
@@ -95,7 +111,19 @@ fun SearchingWideBand() = Screen {
 @PreviewTest
 @PhonePreview
 @Composable
-fun LockedSharp() = Screen {
+fun LockedSharp() = Screen(
+    // Tuned up from flat in two turns of the peg, overshooting a little.
+    trace = trace { age ->
+        when {
+            age > 7.0 -> null
+            age > 4.6 -> -38.0 + (7.0 - age) * 1.5
+            age > 3.9 -> -34.0 + (4.6 - age) / 0.7 * 26
+            age > 1.8 -> -8.0 + (3.9 - age) * 0.8
+            age > 1.2 -> -6.0 + (1.8 - age) / 0.6 * 20
+            else -> 14.0
+        }
+    },
+) {
     val focused = reading(it[1], cents = 14.0, widthCents = 49.0)
     focused to focused
 }
@@ -103,7 +131,17 @@ fun LockedSharp() = Screen {
 @PreviewTest
 @PhonePreview
 @Composable
-fun LockedInTune() = Screen {
+fun LockedInTune() = Screen(
+    // Two plucks: the first settling in from sharp, the second steady.
+    trace = trace { age ->
+        when {
+            age > 6.5 -> null
+            age > 3.6 -> 0.6 + 9.0 * kotlin.math.exp(-(6.5 - age) * 2.2)
+            age > 2.9 -> null
+            else -> 0.6 + 4.0 * kotlin.math.exp(-(2.9 - age) * 5)
+        }
+    },
+) {
     val focused = reading(it[3], cents = 0.6, inTune = true)
     focused to focused
 }
@@ -111,7 +149,9 @@ fun LockedInTune() = Screen {
 @PreviewTest
 @PhonePreview
 @Composable
-fun LockedFarFlatHeldAfterNoteStopped() = Screen {
+fun LockedFarFlatHeldAfterNoteStopped() = Screen(
+    trace = trace { age -> (-68.0).takeIf { age in 0.6..3.0 } },
+) {
     reading(it[0], cents = null, widthCents = 280.0) to reading(it[0], cents = -68.0)
 }
 
@@ -148,7 +188,12 @@ fun AutomaticFirstStringChromatic() = Screen(config = TunerConfig()) {
 @PreviewTest
 @PhonePreview
 @Composable
-fun AutomaticIdentifiedUkulele() = Screen(config = TunerConfig(), detected = "ukulele") {
+fun AutomaticIdentifiedUkulele() = Screen(
+    config = TunerConfig(),
+    detected = "ukulele",
+    // A new string slowly going flat as it stretches.
+    trace = trace { age -> (6.0 + age * 2.4).takeIf { age < 5.5 } },
+) {
     val focused = reading(it[2], cents = 6.0, widthCents = 41.0, instrumentId = "ukulele")
     focused to focused
 }

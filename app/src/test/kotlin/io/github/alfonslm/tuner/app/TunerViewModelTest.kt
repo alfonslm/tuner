@@ -108,7 +108,13 @@ class TunerViewModelTest {
         assertTrue(state.running && state.live)
         assertEquals("A2", state.shown!!.target!!.label)
         assertTrue(abs(state.shown.cents!! - 7) < 1, "cents: ${state.shown.cents}")
+
+        // The waterfall follows along: a steady tone leaves a steady history.
+        val traced = viewModel.await("a second of history") { it.trace.points.size >= 40 }
+        assertTrue(traced.trace.points.takeLast(20).all { abs(it.cents - 7) < 1 })
+        assertEquals(traced.shown!!.target!!.id, traced.trace.targetId)
         viewModel.stop()
+        assertTrue(viewModel.state.value.trace.points.isEmpty())
     }
 
     @Test

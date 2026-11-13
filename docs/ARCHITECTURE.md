@@ -72,6 +72,20 @@ noise and removes it, and automatic gain control pumps the level.
 This control over the input is the main reason the app is native rather than a
 web page: browsers only *request* that processing be turned off.
 
+### What the screen shows
+
+- **The meter**: a ±50 cent scale with a needle, coloured by how close the
+  string is.
+- **The waterfall** under it: the last eight seconds of the reading on the
+  same horizontal scale, newest at the top and moving down. A vertical trace
+  is a steady pitch, a slope is a pitch that is changing, so the player sees
+  how far a turn of the peg moved the string and whether a note drifts as it
+  rings. The history belongs to one string and starts over when the tuner
+  moves to another; silence between plucks shows as a gap.
+- **The note name**: large while the tuner is chromatic (it is then the main
+  information), small once the instrument is known, because the row of string
+  buttons already highlights which string is sounding.
+
 ## 2. Module map
 
 ```
@@ -101,10 +115,12 @@ app/src/main/kotlin/io/github/alfonslm/tuner/app/
   audio/MicrophoneSource.kt AudioRecord implementation (see above)
   TunerPipeline.kt          AudioSource + config → Flow<TunerReading>
   TunerViewModel.kt         UI state, start/stop, settings changes
+  PitchTrace.kt             the last 8 s of readings, for the waterfall
   Settings.kt               persisted choices (SharedPreferences)
   MainActivity.kt           permission, lifecycle, keep-screen-on
   ui/TunerScreen.kt         the screen
   ui/Meter.kt               the cents scale and needle
+  ui/Waterfall.kt           the reading's history, falling away under the meter
   ui/Theme.kt               colours
 app/src/test/               the pipeline driven by a synthetic microphone
 ```
@@ -347,11 +363,13 @@ an alternate tuning is one entry (string notes + harmonic model).
     instrument (or stays undecided where two instruments share the pair), and
     the engine recognises guitar, bass, ukulele, violin, viola and cello from
     two plucked strings (a guitar within half a second of the second pluck).
-- **6 app tests** that drive the real pipeline (view model → flow → engine)
-  with a synthetic microphone: a tone gets locked and shown, stopping closes
-  the stream, a microphone that fails to open is reported, settings changes
-  reach the running engine, settings persist, and automatic mode recognises a
-  guitar and offers its strings.
+- **10 app tests**. Six drive the real pipeline (view model → flow → engine)
+  with a synthetic microphone: a tone gets locked and shown and leaves a
+  steady history, stopping closes the stream, a microphone that fails to open
+  is reported, settings changes reach the running engine, settings persist,
+  and automatic mode recognises a guitar and offers its strings. Four cover
+  the waterfall's history: it records, runs on through silence, forgets what
+  is older than its window, and starts over on another string.
 
 `./gradlew :app:validateDebugScreenshotTest` renders the Compose screen on
 the JVM in eleven states (idle, searching, locked sharp, in tune, held
