@@ -1,4 +1,16 @@
-node_modules
-dist
-*.log
+# Gradle
+.gradle/
+build/
+local.properties
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+captures/
+.kotlin/
+
+# Signing
+*.jks
+*.keystore
+
 .DS_Store

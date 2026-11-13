@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Tuner</string>
+
+    <string name="instrument">Instrument</string>
+    <string name="reference_pitch">A4</string>
+    <string name="reference_lower">Lower reference pitch</string>
+    <string name="reference_raise">Raise reference pitch</string>
+    <string name="smart_filter">Smart filter</string>
+
+    <string name="start">Start tuner</string>
+    <string name="stop">Stop</string>
+    <string name="no_note">–</string>
+    <string name="cents_value">%1$s cents</string>
+    <string name="hertz_value">%1$s Hz</string>
+    <string name="pin_string">Keep the tuner on %1$s</string>
+
+    <string name="mode_idle">Tap start and pluck a string</string>
+    <string name="mode_listening">Listening…</string>
+    <string name="mode_wide_waiting">Wide-band · waiting for a steady note</string>
+    <string name="mode_wide_filter_off">Wide-band · smart filter off</string>
+    <string name="mode_locked">Locked on %1$s</string>
+    <string name="mode_pinned">Pinned to %1$s</string>
+    <string name="mode_detail_filter">harmonic filter ±%1$d¢</string>
+    <string name="mode_detail_wide">wide-band</string>
+    <string name="mode_detail_waiting">waiting for the string</string>
+
+    <string name="error_permission">Microphone access was denied. Allow it in the app settings and try again.</string>
+    <string name="error_microphone">Could not start the microphone.</string>
+</resources>

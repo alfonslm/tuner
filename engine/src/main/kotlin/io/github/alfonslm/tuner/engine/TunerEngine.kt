@@ -1,0 +1,311 @@
+package io.github.alfonslm.tuner.engine
+
+import io.github.alfonslm.tuner.dsp.AnalyzerPool
+import io.github.alfonslm.tuner.dsp.FocusedDetector
+import io.github.alfonslm.tuner.dsp.FocusedDetectorOptions
+import io.github.alfonslm.tuner.dsp.FocusedEstimate
+import io.github.alfonslm.tuner.dsp.PitchEstimate
+import io.github.alfonslm.tuner.dsp.SpectralAnalyzer
+import io.github.alfonslm.tuner.dsp.WideDetector
+import io.github.alfonslm.tuner.dsp.nextPowerOfTwo
+import io.github.alfonslm.tuner.music.InstrumentPreset
+import io.github.alfonslm.tuner.music.Target
+import io.github.alfonslm.tuner.music.TargetSet
+import io.github.alfonslm.tuner.music.TargetSetOptions
+import io.github.alfonslm.tuner.music.centsBetween
+import io.github.alfonslm.tuner.music.centsToRatio
+import io.github.alfonslm.tuner.music.createTargetSet
+import io.github.alfonslm.tuner.music.instrumentById
+import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.log10
+import kotlin.math.log2
+import kotlin.math.max
+import kotlin.math.roundToInt
+
+/**
+ * The whole tuner minus the microphone and the screen: feed it audio blocks,
+ * get one [TunerReading] back per block. It has no Android dependency, so it
+ * is unit-tested on the JVM. Not thread-safe: call it from one thread.
+ *
+ * Per block:
+ *  1. the wide detector looks for any pitched note in the instrument's range;
+ *  2. a stability window decides whether that note has settled on one target;
+ *  3. in SEARCH mode a settled note engages the lock; in LOCKED mode the
+ *     focused detector (harmonic comb around the target) produces the reading
+ *     and the wide detector only acts as a watchdog for a change of string;
+ *  4. the reading is smoothed for display.
+ *
+ * @param blockSize samples per [process] call; only used to convert time constants into frames
+ */
+class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig = TunerConfig()) {
+
+    var config: TunerConfig = config
+        private set
+
+    lateinit var targets: TargetSet
+        private set
+
+    private class Lock(
+        val target: Target,
+        val pinned: Boolean,
+        val detector: FocusedDetector,
+        /** Widest the comb may open: how far the string can be from the target and still be ours. */
+        val captureCents: Double,
+        /** Current comb half-width; shrinks as the string approaches the target. */
+        var widthCents: Double,
+        var lastHeard: Double,
+    ) {
+        val frame = FloatArray(detector.frameLength)
+        var misses = 0
+        var handoffFrames = 0
+    }
+
+    private class Pitch(val frequency: Double, val target: Target, val source: PitchSource, val confidence: Double)
+
+    private val pool = AnalyzerPool()
+    private val detectors = HashMap<String, FocusedDetector>()
+    private lateinit var preset: InstrumentPreset
+    private lateinit var wideAnalyzer: SpectralAnalyzer
+    private lateinit var wideDetector: WideDetector
+    private lateinit var widePower: DoubleArray
+    private lateinit var wideFrame: FloatArray
+    private lateinit var ring: RingBuffer
+    private lateinit var stability: StabilityWindow
+    private lateinit var smoother: ReadingSmoother
+    private var lock: Lock? = null
+    private var samples = 0L
+
+    init {
+        rebuild()
+    }
+
+    /** Replaces the configuration. The current lock is dropped; audio history is kept. */
+    fun configure(config: TunerConfig) {
+        this.config = config
+        rebuild()
+    }
+
+    /** Forgets all audio and state, e.g. when the microphone is restarted. */
+    fun reset() {
+        samples = 0
+        rebuild()
+    }
+
+    fun process(block: FloatArray): TunerReading {
+        ring.push(block)
+        samples += block.size
+        val time = samples.toDouble() / sampleRate
+
+        if (!ring.copyLatest(wideFrame)) return reading(time, -120.0, null, null, false)
+
+        // 1. Wide-band analysis: acquisition while searching, watchdog while locked.
+        val rms = wideAnalyzer.powerSpectrum(wideFrame, widePower)
+        val levelDb = 20 * log10(rms + 1e-9)
+        val audible = levelDb > config.levelGateDb
+        val wide = (if (audible) wideDetector.detect(widePower) else null)?.takeIf { it.clarity >= config.wide.minClarity }
+        val wideTarget = wide?.let { targets.nearest(it.frequency) }
+
+        // 2. Has one note been sounding steadily?
+        if (wide != null && wideTarget != null) {
+            stability.push(wideTarget, centsBetween(wide.frequency, wideTarget.frequency))
+        } else {
+            stability.push(null)
+        }
+        val settled = stability.consensus()
+
+        // 3. Mode logic.
+        var pitch: Pitch? = null
+        if (lock != null) pitch = trackLocked(time, audible, wide, settled)
+        if (lock == null) {
+            if (wide != null && wideTarget != null) {
+                pitch = Pitch(wide.frequency, wideTarget, PitchSource.WIDE, wide.clarity)
+            }
+            if (config.smartFilter == SmartFilterMode.AUTO && settled != null) {
+                engage(settled.target, settled.cents, pinned = false, time)
+            }
+        }
+        adaptComb(pitch)
+
+        // 4. Display smoothing.
+        if (pitch == null) return reading(time, levelDb, null, null, false)
+        val smoothed = smoother.push(pitch.target.id, centsBetween(pitch.frequency, pitch.target.frequency), time)
+        return reading(time, levelDb, pitch, smoothed.cents, smoothed.inTune)
+    }
+
+    /** Locked mode: trust the focused detector, use the wide one to notice that the player moved on. */
+    private fun trackLocked(time: Double, audible: Boolean, wide: PitchEstimate?, settled: Consensus?): Pitch? {
+        val lock = lock!!
+        var focus: FocusedEstimate? = null
+        if (audible && ring.copyLatest(lock.frame)) focus = lock.detector.detect(lock.frame, lock.widthCents)
+
+        val elsewhere = !lock.pinned && settled != null && settled.target.id != lock.target.id
+
+        if (focus != null && focus.valid) {
+            // The wide detector landing on an overtone of what the comb tracks is its own
+            // octave error – exactly the mistake the lock exists to prevent – not a new note.
+            val wideAgrees = wide != null && isOvertone(wide.frequency, focus.frequency)
+            if (!elsewhere || wideAgrees) {
+                lock.lastHeard = time
+                val target = followTarget(focus.frequency, time)
+                return Pitch(focus.frequency, target, PitchSource.FOCUSED, focus.salience)
+            }
+        }
+
+        if (elsewhere && settled != null && wide != null) {
+            // A different note is clearly and steadily sounding: move the filter to it.
+            engage(settled.target, settled.cents, pinned = false, time)
+            return Pitch(wide.frequency, settled.target, PitchSource.WIDE, wide.clarity)
+        }
+
+        if (wide != null && abs(centsBetween(wide.frequency, lock.target.frequency)) <= lock.captureCents) {
+            // The comb lost the string (e.g. it was re-tuned in a jump) but it is still in range.
+            lock.lastHeard = time
+            return Pitch(wide.frequency, lock.target, PitchSource.WIDE, wide.clarity)
+        }
+
+        if (!lock.pinned && (time - lock.lastHeard) * 1000 > config.lock.holdMs) this.lock = null
+        return null
+    }
+
+    /**
+     * Hand the lock over to a neighbouring target when the string has been tuned
+     * past the midpoint (chromatic mode: into the next semitone). Returns the
+     * target the current frame should be reported against.
+     */
+    private fun followTarget(frequency: Double, time: Double): Target {
+        val lock = lock!!
+        if (lock.pinned) return lock.target
+        val nearest = targets.nearest(frequency)
+        val toLocked = abs(centsBetween(frequency, lock.target.frequency))
+        val toNearest = abs(centsBetween(frequency, nearest.frequency))
+        if (nearest.id == lock.target.id || toLocked - toNearest < config.lock.handoffHysteresisCents) {
+            lock.handoffFrames = 0
+            return lock.target
+        }
+        if (++lock.handoffFrames < config.lock.handoffFrames) return lock.target
+        engage(nearest, centsBetween(frequency, nearest.frequency), pinned = false, time)
+        return nearest
+    }
+
+    private fun engage(target: Target, offsetCents: Double, pinned: Boolean, time: Double) {
+        val focus = config.focus
+        val captureCents = if (pinned) focus.pinnedCaptureCents else targets.captureCents(target)
+        val detector = detectors.getOrPut("${target.id}:$captureCents") {
+            FocusedDetector(
+                pool,
+                sampleRate,
+                target.frequency,
+                preset.harmonics,
+                FocusedDetectorOptions(
+                    periods = focus.periods,
+                    maxFrame = (focus.maxFrameMs * sampleRate / 1000).roundToInt(),
+                    minPeriods = focus.minPeriods,
+                    minFrame = (focus.minFrameMs * sampleRate / 1000).roundToInt(),
+                    maxWidthCents = captureCents,
+                    maxPartialHz = config.maxPartialHz,
+                    minPeak = focus.minPeak,
+                    minSalience = focus.minSalience,
+                    minExplained = focus.minExplained,
+                    minFundamentalSupport = focus.minFundamentalSupport,
+                ),
+            )
+        }
+        lock = Lock(
+            target = target,
+            pinned = pinned,
+            detector = detector,
+            captureCents = captureCents,
+            widthCents = (abs(offsetCents) + focus.marginCents).coerceIn(focus.marginCents, captureCents),
+            lastHeard = time,
+        )
+    }
+
+    /**
+     * Keeps the comb just wide enough for where the string currently is: it opens
+     * at once when the pitch moves away and closes gradually as the string nears
+     * the target, so the filter is at its most selective when precision matters.
+     */
+    private fun adaptComb(pitch: Pitch?) {
+        val lock = lock ?: return
+        val focus = config.focus
+        if (pitch != null && pitch.target.id == lock.target.id) {
+            val offset = abs(centsBetween(pitch.frequency, lock.target.frequency))
+            val wanted = (offset + focus.marginCents).coerceIn(focus.marginCents, lock.captureCents)
+            lock.widthCents =
+                if (wanted >= lock.widthCents) wanted else lock.widthCents + focus.narrowingRate * (wanted - lock.widthCents)
+            lock.misses = 0
+        } else if (++lock.misses >= config.lock.reopenAfterFrames) {
+            lock.widthCents = lock.captureCents
+        }
+    }
+
+    private fun rebuild() {
+        preset = instrumentById(config.instrumentId)
+        targets = createTargetSet(
+            preset,
+            config.a4,
+            TargetSetOptions(
+                rangeMarginCents = config.wide.rangeMarginCents,
+                captureOverlapCents = config.focus.captureOverlapCents,
+                maxCaptureCents = config.focus.maxCaptureCents,
+            ),
+        )
+        val minHz = targets.minHz
+
+        val longestLag = ceil(sampleRate / minHz).toInt() + 4
+        val wideLength = max(config.wide.minFrameMs * sampleRate / 1000, config.wide.periods * sampleRate / minHz).roundToInt()
+        wideAnalyzer = pool.get(sampleRate, nextPowerOfTwo(wideLength + longestLag), wideLength)
+        wideDetector = WideDetector(wideAnalyzer, minHz, targets.maxHz, config.wide.peakPickRatio, config.maxPartialHz)
+        widePower = DoubleArray(wideAnalyzer.bins)
+        wideFrame = FloatArray(wideLength)
+
+        val capacity = ceil(
+            maxOf(
+                wideLength.toDouble(),
+                config.focus.maxFrameMs * sampleRate / 1000,
+                config.focus.minFrameMs * sampleRate / 1000,
+                config.focus.minPeriods * sampleRate / minHz,
+            ),
+        ).toInt()
+        if (!::ring.isInitialized || ring.capacity != capacity) ring = RingBuffer(capacity)
+        if (samples == 0L) ring.clear()
+
+        val blockMs = blockSize * 1000.0 / sampleRate
+        stability = StabilityWindow(ceil(config.lock.stableMs / blockMs).toInt(), config.lock.maxSpreadCents)
+        smoother = ReadingSmoother(config.display)
+        detectors.clear()
+        lock = null
+
+        // A pin only makes sense for a target of the current instrument.
+        val pinned = config.pinnedTargetId?.let(targets::byId)
+        if (pinned != null) {
+            engage(pinned, config.focus.pinnedCaptureCents, pinned = true, samples.toDouble() / sampleRate)
+        } else if (config.pinnedTargetId != null) {
+            config = config.copy(pinnedTargetId = null)
+        }
+    }
+
+    private fun reading(time: Double, levelDb: Double, pitch: Pitch?, cents: Double?, inTune: Boolean): TunerReading {
+        val lock = lock
+        return TunerReading(
+            time = time,
+            mode = if (lock != null) TunerMode.LOCKED else TunerMode.SEARCH,
+            levelDb = levelDb,
+            source = pitch?.source,
+            target = pitch?.target ?: lock?.target,
+            frequency = if (pitch != null && cents != null) pitch.target.frequency * centsToRatio(cents) else null,
+            cents = cents,
+            confidence = pitch?.confidence ?: 0.0,
+            inTune = inTune,
+            lock = lock?.let { LockInfo(it.target, it.pinned, it.widthCents) },
+        )
+    }
+}
+
+/** True if [frequency] is (close to) [fundamental] or one of its integer multiples. */
+private fun isOvertone(frequency: Double, fundamental: Double): Boolean {
+    val ratio = frequency / fundamental
+    val multiple = ratio.roundToInt()
+    return multiple >= 1 && abs(1200 * log2(ratio / multiple)) <= 40
+}

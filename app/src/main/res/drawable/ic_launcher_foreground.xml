@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A meter scale with the needle just off centre. Drawn inside the 66dp safe zone of the 108dp canvas. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M30,62 H78"
+        android:strokeColor="#8B97A5"
+        android:strokeLineCap="round"
+        android:strokeWidth="2.5" />
+    <path
+        android:pathData="M30,56 V68 M42,58 V66 M66,58 V66 M78,56 V68"
+        android:strokeColor="#8B97A5"
+        android:strokeLineCap="round"
+        android:strokeWidth="2.5" />
+    <path
+        android:pathData="M54,54 V70"
+        android:strokeColor="#4ADE80"
+        android:strokeLineCap="round"
+        android:strokeWidth="3" />
+    <path
+        android:pathData="M60,40 V74"
+        android:strokeColor="#5CC8FF"
+        android:strokeLineCap="round"
+        android:strokeWidth="4.5" />
+</vector>

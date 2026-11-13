@@ -1,9 +1,9 @@
 # Tuner architecture
 
-A tuner that listens through the phone microphone. Its distinguishing feature
-is the **smart filter**: once it knows which note you are tuning to, it stops
-treating the input as "any sound" and starts treating it as "a string that
-should be close to this note", which lets it filter and measure far more
+An Android tuner that listens through the phone microphone. Its distinguishing
+feature is the **smart filter**: once it knows which note you are tuning to, it
+stops treating the input as "any sound" and starts treating it as "a string
+that should be close to this note", which lets it filter and measure far more
 aggressively.
 
 - [1. Shape of the system](#1-shape-of-the-system)
@@ -17,75 +17,100 @@ aggressively.
 
 ## 1. Shape of the system
 
-It is a web app (TypeScript, no framework), so it runs in the browser of any
-phone without an app store. Three threads, each with one job:
+A native Android app in Kotlin, in two Gradle modules:
+
+- **`:engine`** — the tuner itself: DSP, instrument knowledge, and the
+  search/lock logic. Pure Kotlin with no Android dependency, so the whole of
+  it is unit-tested on the JVM. Its API is one call:
+  `TunerEngine.process(block) → TunerReading`.
+- **`:app`** — the Android shell: microphone in, Jetpack Compose UI out.
+
+Two threads, each with one job:
 
 ```mermaid
 flowchart LR
-  mic([Phone microphone]) --> gum[getUserMedia<br/>voice processing OFF]
-  subgraph audio [Audio thread]
-    wl[capture-worklet<br/>groups samples into 1024-sample blocks]
-  end
-  subgraph worker [Worker thread]
-    eng[TunerEngine<br/>all DSP + lock logic]
+  mic([Phone microphone]) --> rec[AudioRecord<br/>UNPROCESSED source, float PCM]
+  subgraph audio [tuner-audio thread]
+    rec --> pipe[tunerReadings flow<br/>reads 1024-sample blocks]
+    pipe --> eng[TunerEngine<br/>all DSP + lock logic]
   end
   subgraph main [Main thread]
-    ctl[TunerController] --> view[TunerView<br/>note, needle, strings]
+    vm[TunerViewModel<br/>StateFlow of TunerUiState] --> ui[TunerScreen<br/>note, needle, strings]
   end
-  gum --> wl
-  wl -- "MessagePort: Float32Array blocks" --> eng
-  eng -- "TunerReading (≈47 per second)" --> ctl
-  ctl -- "config patches" --> eng
+  eng -- "TunerReading, conflated (≈47 per second)" --> vm
+  vm -- "TunerConfig (StateFlow)" --> pipe
 ```
 
-- The **audio thread** only copies samples. Nothing there can stall capture.
-- The **worker** owns all analysis. Audio reaches it directly from the worklet
-  through a `MessagePort`, so a busy UI never delays or drops audio.
-- The **main thread** only draws. It renders the latest reading once per
-  animation frame.
+- The **audio thread** blocks on `AudioRecord.read`, runs the engine on each
+  block, and emits the reading. The engine is single-threaded by design and
+  lives entirely here.
+- The **main thread** only holds state and draws. The reading stream is
+  *conflated*: a slow frame on the UI side means it skips to the newest
+  reading, never that analysis waits.
+- Configuration travels the other way as an immutable `TunerConfig` in a
+  `StateFlow`; the audio loop compares it between blocks. No locks anywhere.
 
-The engine is plain TypeScript with no browser APIs: `process(block) → reading`.
-That is what makes it testable in Node and portable to a native shell
-(React Native / Capacitor, or a line-by-line port to Kotlin/Swift) where only
-the two thin edges — microphone in, UI out — would be rewritten.
+The pipeline is a cold `Flow` (`tunerReadings` in `TunerPipeline.kt`).
+Collecting it opens the microphone; cancelling the collection closes it. That
+makes the lifecycle hard to get wrong: the view model starts a collection on
+"Start" and cancels it on "Stop" or when the app leaves the screen.
 
-Microphone constraints matter: `echoCancellation`, `noiseSuppression` and
-`autoGainControl` are all requested **off**. Phone voice processing regards a
-sustained string as background noise and removes it.
+### Getting clean audio out of a phone
+
+Phones process microphone audio for speech by default, and that processing is
+poison for a tuner: noise suppression regards a sustained string as background
+noise and removes it, and automatic gain control pumps the level.
+`MicrophoneSource` therefore:
+
+- records from `MediaRecorder.AudioSource.UNPROCESSED` when the device
+  supports it, otherwise from `VOICE_RECOGNITION` (the least-processed source
+  every device has to provide);
+- explicitly switches off any `NoiseSuppressor`, `AutomaticGainControl` or
+  `AcousticEchoCanceler` the device still attaches to the recording session;
+- reads float PCM at 48 kHz (falling back to 44.1 kHz), mono.
+
+This control over the input is the main reason the app is native rather than a
+web page: browsers only *request* that processing be turned off.
 
 ## 2. Module map
 
 ```
-public/capture-worklet.js   audio thread: blocks of samples → MessagePort
-src/
-  audio/MicCapture.ts       AudioContext, getUserMedia, worklet node
-  worker/engine.worker.ts   hosts TunerEngine off the main thread
-  worker/protocol.ts        message types between main thread and worker
-  app/TunerController.ts    façade for the UI: start/stop/configure/readings
-  ui/view.ts, styles.css    rendering and input
-  main.ts                   wiring, persisted settings, wake lock
-
-  engine/                   ── platform-independent from here down ──
-    TunerEngine.ts          orchestration + search/locked state machine
-    StabilityWindow.ts      "has one note been sounding steadily?"
-    ReadingSmoother.ts      median + exponential smoothing, in-tune detection
-    RingBuffer.ts           recent audio history
-    config.ts, types.ts     TunerConfig, TunerReading
+engine/src/main/kotlin/io/github/alfonslm/tuner/
+  engine/
+    TunerEngine.kt          orchestration + search/locked state machine
+    StabilityWindow.kt      "has one note been sounding steadily?"
+    ReadingSmoother.kt      median + exponential smoothing, in-tune detection
+    RingBuffer.kt           recent audio history
+    TunerConfig.kt          every tunable, with defaults
+    TunerReading.kt         what the engine reports per block
   dsp/
-    fft.ts                  radix-2 FFT
-    spectral.ts             windowed power spectrum → filtered autocorrelation
-    wideDetector.ts         note-agnostic pitch detector (acquisition, watchdog)
-    harmonicComb.ts         string model: comb filter + harmonic validation
-    focusedDetector.ts      target-aware pitch detector (tracking)
+    Fft.kt                  radix-2 FFT
+    Spectral.kt             windowed power spectrum → filtered autocorrelation
+    WideDetector.kt         note-agnostic pitch detector (acquisition, watchdog)
+    HarmonicComb.kt         string model: comb filter + harmonic validation
+    FocusedDetector.kt      target-aware pitch detector (tracking)
   music/
-    notes.ts                Hz ↔ MIDI ↔ names, cents
-    instruments.ts          presets: strings + harmonic model per instrument
-    targets.ts              TargetSet: the notes the tuner snaps to
-test/                       synthetic plucked strings, DSP and engine scenarios
+    Notes.kt                Hz ↔ MIDI ↔ names, cents
+    Instruments.kt          presets: strings + harmonic model per instrument
+    Targets.kt              TargetSet: the notes the tuner snaps to
+engine/src/test/            synthetic plucked strings, DSP and engine scenarios
+
+app/src/main/kotlin/io/github/alfonslm/tuner/app/
+  audio/AudioSource.kt      interface: something that delivers audio blocks
+  audio/MicrophoneSource.kt AudioRecord implementation (see above)
+  TunerPipeline.kt          AudioSource + config → Flow<TunerReading>
+  TunerViewModel.kt         UI state, start/stop, settings changes
+  Settings.kt               persisted choices (SharedPreferences)
+  MainActivity.kt           permission, lifecycle, keep-screen-on
+  ui/TunerScreen.kt         the screen
+  ui/Meter.kt               the cents scale and needle
+  ui/Theme.kt               colours
+app/src/test/               the pipeline driven by a synthetic microphone
 ```
 
-Dependencies point downwards only: `ui → app → worker → engine → dsp, music`.
-Nothing in `engine/`, `dsp/` or `music/` touches the DOM or Web Audio.
+Dependencies point one way: `ui → view model → pipeline → engine → dsp, music`.
+The app reaches the microphone only through the `AudioSource` interface, which
+is what lets the tests replace it with a generated signal.
 
 ## 3. Signal path
 
@@ -109,7 +134,7 @@ flowchart TD
   sm -. "target + comb width" .-> comb
 ```
 
-Both detectors share one idea, implemented in `dsp/spectral.ts`:
+Both detectors share one idea, implemented in `dsp/Spectral.kt`:
 
 > pitch = position of the autocorrelation peak, where the autocorrelation is
 > computed as `IFFT(power spectrum × weights)`.
@@ -240,16 +265,17 @@ hand-off when a string is tuned past the midpoint, so the target never flaps.
 
 | Control | Config | Behaviour |
 | --- | --- | --- |
-| Smart filter switch | `smartFilter: 'auto' \| 'off'` | `auto` (default) switches as described. `off` stays wide-band always. |
+| Smart filter switch | `smartFilter: AUTO \| OFF` | `AUTO` (default) switches as described. `OFF` stays wide-band always. |
 | Tap a string | `pinnedTargetId` | Forces the lock onto that string with a ±400-cent capture range and ignores every other note. For strings that are far off (new strings) or noisy rooms. Tap again to release. |
 
-Every `TunerReading` carries `mode`, `source` (`wide` / `focused`) and the
+Every `TunerReading` carries `mode`, `source` (`WIDE` / `FOCUSED`) and the
 lock's target and comb width, so the UI can show exactly what the filter is
 doing.
 
 ## 6. Tunables
 
-All in `engine/config.ts` (`DEFAULT_CONFIG`). The ones that shape behaviour:
+All in `engine/TunerConfig.kt`, as defaults of an immutable data class. The
+ones that shape behaviour:
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -262,37 +288,48 @@ All in `engine/config.ts` (`DEFAULT_CONFIG`). The ones that shape behaviour:
 | `wide.minClarity` | 0.85 | periodicity needed for a wide-band reading |
 | `display.inTuneCents` / `inTuneHoldMs` | 3 / 400 | when the display turns green |
 
-Instrument knowledge lives in `music/instruments.ts`: adding an instrument or
+Instrument knowledge lives in `music/Instruments.kt`: adding an instrument or
 an alternate tuning is one entry (string notes + harmonic model).
 
 ## 7. What has been verified
 
-`npm test` runs 42 tests against a plucked-string synthesizer (inharmonic
-partials with individual decay, weak fundamental, white noise, mains hum):
+`./gradlew test` needs no device. It runs:
 
-- each guitar string is identified, locked within 0.5 s of the pluck, and read
-  to within 0.3 cent;
-- on a stiff string (B = 10⁻⁴) the wide detector reads about 3 cents sharp, the
-  focused detector under 0.5;
-- in noise where wide-band detection fails on more than 15 of 20 trials, the
-  focused detector is right on at least 19;
-- noise and silence never produce a reading; every other string of the
-  instrument is rejected even with the comb fully open;
-- E2 ↔ E4, string changes, chromatic hand-off through a semitone, hold and
-  release, and pinning behave as described above.
+- **28 engine tests** against a plucked-string synthesizer (inharmonic
+  partials with individual decay, weak fundamental, white noise, mains hum):
+  - each guitar string is identified, locked within 0.5 s of the pluck, and
+    read to within 0.3 cent;
+  - on a stiff string (B = 10⁻⁴) the wide detector reads about 3 cents sharp,
+    the focused detector under 1;
+  - in noise where wide-band detection fails on more than 15 of 20 trials, the
+    focused detector is right on at least 19;
+  - noise and silence never produce a reading; every other string of the
+    instrument is rejected even with the comb fully open;
+  - E2 ↔ E4, string changes, chromatic hand-off through a semitone, hold and
+    release, and pinning behave as described above.
+- **5 app tests** that drive the real pipeline (view model → flow → engine)
+  with a synthetic microphone: a tone gets locked and shown, stopping closes
+  the stream, a microphone that fails to open is reported, settings changes
+  reach the running engine, settings persist.
 
-The built app was also driven in headless Chromium with a synthesized
-recording as the microphone (worklet → worker → UI), for guitar, chromatic,
-pinned and filter-off modes.
+`./gradlew :app:validateDebugScreenshotTest` renders the Compose screen on
+the JVM in eight states (idle, searching, locked sharp, in tune, held reading,
+pinned, chromatic with the filter off, permission denied) and compares them
+with the reference images in `app/src/screenshotTestDebug/reference`. After an
+intentional UI change, regenerate them with `:app:updateDebugScreenshotTest`.
 
-The engine takes about 1 ms per 21 ms block in Node on a desktop CPU.
+Debug and release APKs build, and Android lint reports no issues.
+
+What none of this covers is the part that needs hardware: `MicrophoneSource`
+has been compiled but never run, and no audio from a real phone microphone has
+been through the engine yet.
 
 ## 8. Limits and next steps
 
-- **Not yet tried on a real phone with a real instrument.** Thresholds were
-  set on synthetic signals and will need a pass with recordings; the first
-  thing to check is `levelGateDb` and `minClarity` against real phone
-  microphones with voice processing disabled.
+- **Not yet run on a phone.** Thresholds were set on synthetic signals and
+  will need a pass with a real instrument; the first things to check are
+  `levelGateDb` and `wide.minClarity` against real phone microphones, and how
+  much CPU the engine takes per block on a mid-range device.
 - **Tonal interference near a partial** (strong mains hum at 100/150 Hz next
   to low E, another instrument playing) biases any estimator. The validation
   rejects such frames rather than show a wrong value, so the needle may drop
@@ -301,5 +338,9 @@ The engine takes about 1 ms per 21 ms block in Node on a desktop CPU.
   observed partials would remove the remaining ≈0.5 cent bias.
 - **Chromatic mode starts at C2**; basses should use the bass preset, which
   sizes the analysis windows for E1.
-- Natural follow-ups: installable PWA (manifest + offline cache), alternate
-  tunings, a strobe-style display driven by per-partial phase.
+- **Android only.** The engine is plain Kotlin without JVM-specific APIs
+  beyond `kotlin.math`, so moving it to Kotlin Multiplatform for an iOS app
+  later is mostly a build-file change; the microphone and UI layers would be
+  written per platform.
+- Natural follow-ups: alternate tunings, a strobe-style display driven by
+  per-partial phase, release signing and a Play Store listing.

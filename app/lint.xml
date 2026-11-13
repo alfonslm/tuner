@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!--
+        Lint suggests renaming mipmap-anydpi-v26 to mipmap-anydpi because minSdk is 26,
+        but resource linking then no longer finds the adaptive icon. Keep the qualifier.
+    -->
+    <issue id="ObsoleteSdkInt">
+        <ignore path="src/main/res/mipmap-anydpi-v26" />
+    </issue>
+</lint>
