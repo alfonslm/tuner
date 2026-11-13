@@ -56,11 +56,12 @@ data class WideConfig(
     val minLockClarity: Double = 0.5,
     /**
      * The shortest period that is at least this good, relative to the best one,
-     * is taken as the pitch. Low enough that the string just plucked wins over a
-     * quieter one ringing an octave or two below it, whose longer period fits
-     * both strings and therefore always scores highest.
+     * is taken as the pitch. High, because a small microphone hears a low
+     * string mostly as its octave, and at a lower ratio that octave's period
+     * wins. (It was 0.65 while a low ratio was the only way to hear a plucked
+     * string over one ringing below it; `SpectralHistory` does that now.)
      */
-    val peakPickRatio: Double = 0.65,
+    val peakPickRatio: Double = 0.85,
     /** How far outside the outermost strings the detector still listens. */
     val rangeMarginCents: Double = 300.0,
 )

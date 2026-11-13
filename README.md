@@ -23,9 +23,14 @@ terminal with the Android SDK installed (`ANDROID_HOME` set, or `sdk.dir` in
 ./gradlew :app:installDebug   # build and install on a connected phone
 ./gradlew test                # engine + app unit tests (no device needed)
 ./gradlew :app:validateDebugScreenshotTest   # UI against the reference images
+./gradlew :engine:recordingsTest             # the engine against recordings of a real guitar (needs ffmpeg)
 ```
 
 Requires Android 8.0 (API 26) or newer.
+
+The last of these is the check to run before a build goes to anyone: the
+synthetic tests have passed every fault that the recordings in `recordings/`
+later showed.
 
 To see what the engine makes of a recording (no phone needed), convert it to
 a mono float WAV and run the report; the notes heard, their offsets and how

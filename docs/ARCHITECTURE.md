@@ -764,15 +764,15 @@ been through the engine yet.
 
 - **Checked against recordings, not yet on a phone by me.** Sixteen recordings
   of an acoustic guitar through a laptop microphone (the six open strings
-  plucked several times each, and fretted notes from F2 to E5) were run
-  through the engine with `RecordingReport`. They are not in the repository.
-  After the changes they prompted, every open string is named correctly in
-  guitar, automatic and chromatic mode; within a note 90 % of the readings lie
-  in a band 1 to 3 cents wide (part of it the string's own drift as it
-  decays); and there is no jump towards the strings ringing along and no
-  octave change. The first moments after some hard plucks still read up to 10
-  cents off, which may be the string (see below). A laptop microphone is not a
-  phone's; the phone remains to be confirmed.
+  plucked several times each, and fretted notes from F2 to E5) are in
+  `recordings/`, and `./gradlew :engine:recordingsTest` runs the engine over
+  them and holds it to what it did when they were last examined by hand:
+  every open string named correctly in guitar, automatic and chromatic mode,
+  read within a cent of where the string was, at least 85 % of the readings
+  within 2.5 cents of the median, confidence above 0.93; fretted notes heard
+  at their own octave. It is run before any build is handed over (the JVM
+  cannot decode the files, so it is not part of `test`). A laptop microphone
+  is not a phone's; the phone remains to be confirmed.
 - **Known from the recordings and left as it is:**
   - a note whose pitch really moves is followed, and if it moves across the
     midpoint between two semitones in chromatic mode the target changes back
