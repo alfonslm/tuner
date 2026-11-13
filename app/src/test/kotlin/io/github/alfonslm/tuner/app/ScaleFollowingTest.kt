@@ -2,7 +2,6 @@ package io.github.alfonslm.tuner.app
 
 import io.github.alfonslm.tuner.app.ui.ScaleFollower
 import io.github.alfonslm.tuner.app.ui.ScaleWindow
-import io.github.alfonslm.tuner.app.ui.unclarity
 import io.github.alfonslm.tuner.engine.TunerConfig
 import io.github.alfonslm.tuner.engine.TunerEngine
 import org.junit.Assume.assumeTrue
@@ -18,9 +17,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * The scale's window, decided from what the real engine makes of sound: it
- * must stand still when there is only noise, and still go to a string that is
- * far out.
+ * What the screen decides from the engine's readings, tried on sound: the
+ * scale's window must stand still when there is only noise and still go to a
+ * string that is far out; the line in the waterfall must be there for a string
+ * and not for noise.
  */
 class ScaleFollowingTest {
     private val rate = 48_000
@@ -86,6 +86,59 @@ class ScaleFollowingTest {
                 assertTrue(readings > 30, "$instrument, seed $seed: only $readings readings, not much of a test")
                 assertEquals(0, moved, "$instrument, seed $seed: the scale moved")
             }
+        }
+    }
+
+    /**
+     * What the line in the waterfall does over a whole signal: of the readings the
+     * tuner gave, how many ended up on the line firmly drawn, and how many at all.
+     */
+    private class Line(val readings: Int, val firm: Int, val drawn: Int)
+
+    private fun line(signal: FloatArray, instrument: String): Line {
+        val engine = TunerEngine(rate, block, TunerConfig(instrumentId = instrument))
+        var trace = PitchTrace()
+        var readings = 0
+        // A reading is counted when it leaves the picture or the signal ends, by which time it is settled whether its stretch got a line.
+        val firm = HashSet<Double>()
+        val drawn = HashSet<Double>()
+        for (start in 0..signal.size - block step block) {
+            val reading = engine.process(signal.copyOfRange(start, start + block))
+            if (reading.voiced) readings++
+            trace = trace.add(reading)
+            for (point in trace.runs().flatten()) {
+                if (point.sure > 0.02f) drawn += point.time
+                if (point.sure >= 0.5f) firm += point.time
+            }
+        }
+        return Line(readings, firm.size, drawn.size)
+    }
+
+    @Test
+    fun `chatter leaves no line`() {
+        for (seed in 1L..4L) {
+            for (instrument in listOf("guitar", "chromatic")) {
+                val line = line(chatter(20.0, seed), instrument)
+                println("LINE chatter $instrument seed $seed: ${line.readings} readings, on the line ${line.drawn}, firmly ${line.firm}")
+                assertTrue(line.readings > 30, "$instrument, seed $seed: only ${line.readings} readings, not much of a test")
+                assertTrue(line.drawn <= line.readings / 20, "$instrument, seed $seed: ${line.drawn} of ${line.readings} stray readings on the line")
+            }
+        }
+    }
+
+    @Test
+    fun `the recorded strings keep their line`() {
+        for (string in listOf("E4", "B3", "G3", "D3", "A2", "E2")) {
+            val line = line(recording("open-$string"), "guitar")
+            println("LINE open $string: ${line.readings} readings, on the line ${line.drawn}, firmly ${line.firm}")
+            assertTrue(line.firm >= 0.8 * line.readings, "open $string: ${line.firm} of ${line.readings} readings firmly on the line")
+        }
+        // Fretted notes held steadily keep theirs too. (The ones that waver by five cents and
+        // more lose much of it: that is the line saying the tuner did not know, which is its job.)
+        for (number in listOf(1, 6)) {
+            val line = line(recording("fretted-%02d".format(number)), "chromatic")
+            println("LINE fretted $number: ${line.readings} readings, on the line ${line.drawn}, firmly ${line.firm}")
+            assertTrue(line.firm >= 0.9 * line.readings, "fretted $number: ${line.firm} of ${line.readings} readings firmly on the line")
         }
     }
 

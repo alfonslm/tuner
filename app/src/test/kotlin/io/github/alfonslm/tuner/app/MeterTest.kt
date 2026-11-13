@@ -7,7 +7,6 @@ import io.github.alfonslm.tuner.app.ui.SCALE_JERK
 import io.github.alfonslm.tuner.app.ui.ScaleFollower
 import io.github.alfonslm.tuner.app.ui.ScaleWindow
 import io.github.alfonslm.tuner.app.ui.scaleWindow
-import io.github.alfonslm.tuner.app.ui.unclarity
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals

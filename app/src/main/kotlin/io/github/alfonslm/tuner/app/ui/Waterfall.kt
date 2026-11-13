@@ -26,13 +26,11 @@ import io.github.alfonslm.tuner.dsp.SPECTRUM_COLUMNS
 import io.github.alfonslm.tuner.dsp.SPECTRUM_RANGE_CENTS
 import io.github.alfonslm.tuner.engine.SpectrumRow
 import kotlin.math.abs
+import kotlin.math.min
 import kotlin.math.ceil
 import kotlin.math.expm1
 import kotlin.math.pow
 import kotlin.math.roundToInt
-
-/** Readings further apart than this (seconds) are separate notes, not one line. */
-private const val GAP_SECONDS = 0.15
 
 /** Seconds between the faint horizontal time lines. */
 private const val GRID_SECONDS = 2.0
@@ -49,7 +47,9 @@ private const val GRID_SECONDS = 2.0
  * brightness says how much energy is there, on black: a clean note lights a
  * narrow stripe, a stiff or dying one a wider and fainter one, a second string
  * a second stripe, and silence is dark. The tuner's reading runs through it as
- * a thin white line.
+ * a thin white line, where the tuner knew where the note was: a few readings
+ * in passing leave none ([PitchTrace.runs]), and within a stretch it fades
+ * where the reading was unclear ([TracePoint.sure]).
  *
  * As a [WaterfallStyle.LINE] it shows only the reading, in the colour the
  * needle had at each moment.
@@ -118,18 +118,23 @@ fun Waterfall(trace: PitchTrace, style: WaterfallStyle, inTuneCents: Float, modi
 
         // The reading: a fine white thread through the spectrogram, or the whole picture on its own.
         val stroke = (if (spectral) 1.5.dp else 3.dp).toPx()
-        var previous: TracePoint? = null
-        for (point in trace.points) {
-            val position = Offset(onScale(point.cents), y(point.time))
-            val color = (if (spectral) Color.White else traceColor(point)).copy(alpha = fade(trace.now - point.time))
-            val before = previous
-            if (before != null && point.time - before.time <= GAP_SECONDS) {
-                val from = Offset(onScale(before.cents), y(before.time))
-                drawLine(color, from, position, strokeWidth = stroke, cap = StrokeCap.Round)
-            } else {
-                drawCircle(color, radius = stroke / 2, center = position)
+        for (run in trace.runs()) {
+            var before: TracePoint? = null
+            for (point in run) {
+                val position = Offset(onScale(point.cents), y(point.time))
+                val from = before
+                before = point
+                // The line is only drawn where the tuner knew where the note was: a stretch between
+                // two readings is as firm as the less sure of them, and where neither was sure there is none.
+                val sure = if (from != null) min(point.sure, from.sure) else point.sure
+                if (sure <= 0.02f) continue
+                val color = (if (spectral) Color.White else traceColor(point)).copy(alpha = fade(trace.now - point.time) * sure)
+                if (from != null) {
+                    drawLine(color, Offset(onScale(from.cents), y(from.time)), position, strokeWidth = stroke, cap = StrokeCap.Round)
+                } else {
+                    drawCircle(color, radius = stroke / 2, center = position)
+                }
             }
-            previous = point
         }
     }
 }

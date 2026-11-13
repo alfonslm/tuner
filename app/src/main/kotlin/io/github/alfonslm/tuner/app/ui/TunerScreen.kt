@@ -64,6 +64,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.alfonslm.tuner.app.R
+import io.github.alfonslm.tuner.app.unclarity
 import io.github.alfonslm.tuner.app.TunerError
 import io.github.alfonslm.tuner.app.TunerUiState
 import io.github.alfonslm.tuner.engine.PitchSource

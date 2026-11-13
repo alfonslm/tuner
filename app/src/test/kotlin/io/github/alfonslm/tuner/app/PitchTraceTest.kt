@@ -22,6 +22,8 @@ class PitchTraceTest {
         inTune: Boolean = false,
         spectrum: SpectrumRow? = null,
         delay: Double = 0.0,
+        spreadCents: Double? = 0.3,
+        confidence: Double = 1.0,
     ) = TunerReading(
         time = time,
         delay = if (cents != null) delay else 0.0,
@@ -32,11 +34,50 @@ class PitchTraceTest {
         target = target,
         frequency = cents?.let { 110.0 },
         cents = cents,
-        confidence = 1.0,
+        spreadCents = spreadCents.takeIf { cents != null },
+        confidence = confidence,
         inTune = inTune,
         lock = null,
         spectrum = spectrum,
     )
+
+    @Test
+    fun `only a stretch of readings that lasts leaves a line`() {
+        var trace = PitchTrace()
+        // Three readings in passing, a pause, a note of half a second, a pause, two readings more.
+        for (i in 0 until 3) trace = trace.add(reading(1.0 + 0.02 * i, cents = 40.0))
+        for (i in 0 until 25) trace = trace.add(reading(2.0 + 0.02 * i, cents = -5.0))
+        for (i in 0 until 2) trace = trace.add(reading(3.0 + 0.02 * i, cents = 12.0))
+        assertEquals(30, trace.points.size)
+        val runs = trace.runs()
+        assertEquals(1, runs.size)
+        assertEquals(25, runs.single().size)
+        assertTrue(runs.single().all { it.cents == -5f })
+
+        // A stretch that is still growing shows once it has lasted long enough, and then from its beginning.
+        var growing = PitchTrace()
+        for (i in 0 until 10) growing = growing.add(reading(5.0 + 0.02 * i))
+        assertTrue(growing.runs().isEmpty())
+        for (i in 10 until 17) growing = growing.add(reading(5.0 + 0.02 * i))
+        assertEquals(17, growing.runs().single().size)
+    }
+
+    @Test
+    fun `the line is as firm as the tuner was sure`() {
+        fun sure(spreadCents: Double?, confidence: Double) =
+            PitchTrace().add(reading(1.0, spreadCents = spreadCents, confidence = confidence)).points.single().sure
+        // One clean note: drawn in full.
+        assertEquals(1f, sure(0.3, 0.99))
+        // The estimates scatter, or the note is not most of what is sounding: fainter, then gone.
+        assertTrue(sure(3.5, 0.99) in 0.05f..0.95f)
+        assertEquals(0f, sure(6.0, 0.99))
+        assertTrue(sure(0.3, 0.72) in 0.05f..0.95f)
+        assertEquals(0f, sure(0.3, 0.5))
+        // A note's first readings, before their scatter is known: there, but not in full.
+        assertTrue(sure(null, 0.99) in 0.3f..0.9f)
+        assertEquals(1f, traceCertainty(0f))
+        assertEquals(0f, traceCertainty(1f))
+    }
 
     @Test
     fun `records where the pitch has been, oldest first`() {

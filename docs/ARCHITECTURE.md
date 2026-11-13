@@ -114,6 +114,18 @@ web page: browsers only *request* that processing be turned off.
   slanted is a pitch that is changing, so the player sees how far a turn of
   the peg moved the string and whether a note drifts as it rings. The picture
   belongs to one string and starts over when the tuner moves to another.
+
+  The line says "the note was here", so it is only drawn where the tuner knew.
+  A stretch of readings shorter than 0.3 s leaves none: the reading is an
+  average, and a few readings in passing never were one. (A stretch that is
+  still growing appears once it has lasted that long, from its beginning.)
+  Within a stretch the line fades where the reading was unclear, by the same
+  measure as the needle, and is gone where it was more than 70 % of the way to
+  broken up. Run through the engine, speech-like chatter gives about a hundred
+  stray readings in twenty seconds and not one of them leaves a line; the
+  recorded open strings keep theirs for 87 to 100 % of their readings. Notes
+  that waver by five cents and more (some of the recorded fretted ones) lose
+  much of it, which is the line saying the tuner did not know.
 - **The note name**: large while the tuner is chromatic (it is then the main
   information), small once the instrument is known, because the row of string
   buttons already highlights which string is sounding.
@@ -742,7 +754,7 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
     it chooses only among the tunings in use, tells standard from Drop D by
     the low string, reaches down to the B0 of a 5-string bass when that is in
     use, and recognises a custom tuning.
-- **33 app tests** (one of them on the recordings, when those have been decoded).
+- **37 app tests** (three of them on the recordings, when those have been decoded).
   - Nine drive the real pipeline (view model → flow → engine) with a synthetic
     microphone: a tone gets locked and shown, its spectrogram rows arrive
     without a gap, stopping closes the stream, a microphone that fails to open
