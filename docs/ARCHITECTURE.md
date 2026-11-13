@@ -354,17 +354,24 @@ A row is produced every third block (about 16 per second) and travels in
 
 A real string does not give a steady estimate. Another string's overtone
 sounding a few cents away makes it beat, two or three times a second, by
-several cents either way; averaging that out takes a quarter of a second, and
-a needle that slow is tiresome to tune by. `ReadingSmoother` therefore adapts:
+several cents either way. `ReadingSmoother` steadies the needle against that:
 
 - a median of three drops a single stray frame;
-- while estimates stay within about 3 cents of where the needle is, each moves
-  it only a little (weight 0.12), so wobble averages out;
-- the further they are from it, the more they are believed, up to weight 0.6
-  from 9 cents on, so a pitch that has really moved is followed in a few
-  frames and never trails by much more than the width of that steady zone;
-- at a pluck the needle starts over from the new note's first reading and
-  follows closely for six frames, instead of creeping there from the old value.
+- an exponential moving average with a time constant of 200 ms
+  (`display.smoothingMs`) averages the wobble out;
+- at a pluck the average starts over, so the needle goes to the new note at
+  once instead of sliding there from the old value. The first readings of a
+  note are averaged with equal weight until there are enough of them for the
+  moving average to take over.
+
+The price is that the needle trails a peg that is being turned by those
+200 ms: 6 cents at 30 cents a second.
+
+An average that adapts (slow near the needle, fast far from it) was tried
+first. It was no steadier against beating, since the beat swings further than
+any zone narrow enough to be useful, and it followed a moving pitch only a
+little better (6 cents behind where the plain average is 8), for four more
+settings. The plain average stayed.
 
 Nothing is shown for 150 ms after a pluck is noticed. The attack is noise and
 a moment of wildly sharp pitch, and the analysis windows still hold part of
@@ -374,17 +381,15 @@ the sound from before; the previous reading stays on screen meanwhile.
 
 Results come out later than the sound they describe, and by different
 amounts. A reading describes the middle of its analysis window (60 to 75 ms
-back) and is then smoothed; while the pitch is on the move that adds about
-35 ms. A spectrogram row describes the middle of a much longer window: about
-0.25 s.
+back) and is then averaged over 200 ms, so the needle shows the pitch of about
+0.3 s ago. A spectrogram row describes the middle of a much longer window:
+about 0.25 s.
 
 Drawn at the time they were produced, the reading would run beside the stripe
 whenever the pitch moves, not through it. So both carry the time of their
 audio: a row in `SpectrumRow.time`, a reading as `TunerReading.delay` behind
 `time`. The waterfall places everything at audio time, and its top edge is the
-moment the newest reading describes, which is what the needle is showing. The
-spectrogram therefore starts a little below the top; it needs more sound
-before it can say anything.
+moment the newest reading describes, which is what the needle is showing.
 
 ## 5. Automatic switching
 
@@ -514,8 +519,7 @@ ones that shape behaviour:
 | `wide.minClarity` / `minLockClarity` | 0.75 / 0.5 | periodicity needed for a wide-band reading to be shown / to count towards a lock |
 | `wide.peakPickRatio` | 0.65 | how readily a shorter period is preferred |
 | `fresh.memoryMs` / `fadeMs` / `onsetRise` | 500 / 1500 / 0.25 | hearing a plucked string apart from ringing ones |
-| `display.steadySmoothing` / `movingSmoothing` | 0.12 / 0.6 | how much one estimate moves the needle when it is near it / far from it |
-| `display.steadyCents` / `movingCents` | 3 / 9 | where "near" ends and "far" begins |
+| `display.smoothingMs` | 200 | time constant of the needle's moving average; longer is steadier and trails a turning peg further |
 | `display.attackHoldMs` | 150 | nothing is shown for this long after a pluck |
 | `display.inTuneCents` / `inTuneHoldMs` | 3 / 400 | when the display turns green |
 
@@ -545,9 +549,10 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
   - the high E is read to within 1.5 cents over a ringing low E, A or B at
     12, 6 and 3 dB below it, and the tuner goes to the low E when that is
     plucked over a ringing high E;
-  - a pitch moving at 30 cents a second is trailed by the needle by 3 to 7.5
-    cents, and it closes the gap within half a second of the pitch coming to
-    rest;
+  - a pitch moving at 30 cents a second is trailed by the needle by 6 to 10
+    cents, every reading is within a cent of the truth at the moment it says
+    it describes, and the gap is closed within three quarters of a second of
+    the pitch coming to rest;
   - with another string's overtone beating against the note 20 cents away, the
     needle swings by less than 60 % of what the estimate does;
   - a string plucked again after the peg was turned is read at its new pitch
@@ -604,8 +609,7 @@ been through the engine yet.
   what happened on the device has to be confirmed there.
 - **A hard pluck really is sharp at first.** A string plucked hard starts
   above its pitch and settles over about a second; the tuner shows that, as it
-  should, and with the steadied needle it shows it a little longer (a note
-  starting 20 cents sharp reads +12 after 0.4 s where the string is at +7).
+  should, and the averaged needle runs a little behind it on the way down.
   Tune to where it settles, or pluck gently.
 - **An overtone of another string that sounds next to the note** (a low string
   20 cents out, set ringing by the pluck) pulls the reading towards it and

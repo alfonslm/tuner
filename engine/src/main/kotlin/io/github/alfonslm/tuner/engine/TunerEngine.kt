@@ -428,7 +428,7 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
 
         val blockMs = blockSize * 1000.0 / sampleRate
         stability = StabilityWindow(ceil(config.lock.stableMs / blockMs).toInt(), config.lock.maxSpreadCents)
-        smoother = ReadingSmoother(config.display)
+        smoother = ReadingSmoother(config.display, blockSize.toDouble() / sampleRate)
         detectors.clear()
         lock = null
         pluckedAt = null
@@ -471,7 +471,7 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         val lock = lock
         return TunerReading(
             time = time,
-            delay = if (pitch == null) 0.0 else (pitch.window / 2.0 + smoother.delayFrames * blockSize) / sampleRate,
+            delay = if (pitch == null) 0.0 else pitch.window / 2.0 / sampleRate + smoother.delay,
             instrumentId = preset.id,
             mode = if (lock != null) TunerMode.LOCKED else TunerMode.SEARCH,
             levelDb = levelDb,

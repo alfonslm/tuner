@@ -104,14 +104,16 @@ class EngineTest {
         val moving = readings.between(1.3, 1.9)
         assertTrue(moving.all { it.source == PitchSource.FOCUSED })
 
-        // The needle trails a steadily moving pitch, by a bounded amount: a few cents, however long it moves.
-        assertTrue(moving.all { it.delay in 0.09..0.13 }, "delays ${moving.map { it.delay }.distinct()}")
-        assertTrue(moving.all { truth(it.time) - it.cents!! in 3.0..7.5 }, "lag ${moving.map { truth(it.time) - it.cents!! }}")
-        // Dated by its delay, the reading is within half a stripe's width of the pitch at that moment.
-        assertTrue(moving.all { abs(truth(it.time - it.delay) - it.cents!!) < 4 }, "${moving.map { truth(it.time - it.delay) - it.cents!! }}")
+        // The needle trails a steadily moving pitch by the time its average spans: here 6 to 10 cents.
+        assertTrue(moving.all { it.delay in 0.27..0.31 }, "delays ${moving.map { it.delay }.distinct()}")
+        assertTrue(moving.all { truth(it.time) - it.cents!! in 6.0..10.0 }, "lag ${moving.map { truth(it.time) - it.cents!! }}")
+        // Dated by its delay, the reading is within a few cents of the pitch at that moment, and
+        // within one once the movement has lasted as long as the average spans.
+        assertTrue(moving.all { abs(truth(it.time - it.delay) - it.cents!!) < 3 })
+        assertTrue(readings.between(1.6, 1.9).all { abs(truth(it.time - it.delay) - it.cents!!) < 1 }, "${moving.map { truth(it.time - it.delay) - it.cents!! }}")
 
-        // Once the pitch comes to rest the needle closes the last few cents gently: within half a second.
-        assertTrue(readings.between(2.5, 3.0).all { abs(it.cents!!) < 0.5 }, "${readings.between(2.5, 3.0).maxOf { abs(it.cents!!) }}")
+        // Once the pitch comes to rest the needle closes the gap within three quarters of a second.
+        assertTrue(readings.between(2.75, 3.0).all { abs(it.cents!!) < 0.5 }, "${readings.between(2.75, 3.0).maxOf { abs(it.cents!!) }}")
         assertTrue(readings.filter { !it.voiced }.all { it.delay == 0.0 })
     }
 
@@ -130,7 +132,7 @@ class EngineTest {
             return cents.max() - cents.min()
         }
         // What the estimate does, shown by a needle that believes every reading...
-        val raw = swing(guitar.copy(display = guitar.display.copy(steadySmoothing = 0.6)))
+        val raw = swing(guitar.copy(display = guitar.display.copy(smoothingMs = 0.0)))
         // ...and what the needle does.
         val steadied = swing(guitar)
         assertTrue(raw > 7, "estimate swings by $raw")
