@@ -4,6 +4,7 @@ import io.github.alfonslm.tuner.app.ui.headTallness
 import io.github.alfonslm.tuner.app.ui.needleOpacity
 import io.github.alfonslm.tuner.app.ui.ScaleWindow
 import io.github.alfonslm.tuner.app.ui.scaleWindow
+import io.github.alfonslm.tuner.app.ui.unclarity
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -47,22 +48,37 @@ class MeterTest {
     }
 
     @Test
-    fun `the line in the needle is crisp on a clear note and fades as the signal breaks up`() {
-        assertEquals(1f, needleOpacity(0.2f, held = false))
-        assertEquals(1f, needleOpacity(1f, held = false))
-        val steps = listOf(1f, 2f, 3f, 4f, 5f, 6f).map { needleOpacity(it, held = false) }
-        assertTrue(steps.zipWithNext().all { (a, b) -> b < a }, "$steps")
-        // In a broken-up signal it is all but gone, and stays that way however bad it gets.
-        assertTrue(needleOpacity(6f, held = false) < 0.1f)
-        assertEquals(needleOpacity(6f, held = false), needleOpacity(30f, held = false))
-        // Before the scatter is known it is in between.
-        assertTrue(needleOpacity(null, held = false) in 0.3f..0.8f)
+    fun `a reading is clear when the estimates agree and the note is alone`() {
+        assertEquals(0f, unclarity(0.3f, 0.99f))
+        assertEquals(0f, unclarity(1f, 0.93f))
+        // Scatter makes it unclear, step by step, up to a limit.
+        val scattered = listOf(1f, 2f, 3f, 4f, 5f, 6f).map { unclarity(it, 1f) }
+        assertTrue(scattered.zipWithNext().all { (a, b) -> b > a }, "$scattered")
+        assertEquals(1f, unclarity(6f, 1f))
+        assertEquals(1f, unclarity(30f, 1f))
+        // So does company: the less of the sound is this note, the less clear.
+        val mixed = listOf(0.92f, 0.85f, 0.75f, 0.65f, 0.55f).map { unclarity(0.3f, it) }
+        assertTrue(mixed.zipWithNext().all { (a, b) -> b > a }, "$mixed")
+        assertEquals(1f, unclarity(0.3f, 0.4f))
+        // The worse of the two counts.
+        assertEquals(unclarity(4f, 1f), unclarity(4f, 0.9f))
+        assertEquals(unclarity(0.3f, 0.6f), unclarity(2f, 0.6f))
+        // Before the scatter is known a reading is neither clear nor broken up.
+        assertTrue(unclarity(null, 1f) in 0.2f..0.6f)
+        assertEquals(unclarity(null, 1f), unclarity(null, null))
+    }
+
+    @Test
+    fun `the head is a tall crisp needle for a clear note and a short faint one for a broken-up signal`() {
+        assertEquals(1f, needleOpacity(0f, held = false))
+        assertEquals(1f, headTallness(0f))
+        val steps = listOf(0f, 0.25f, 0.5f, 0.75f, 1f)
+        assertTrue(steps.map { needleOpacity(it, held = false) }.zipWithNext().all { (a, b) -> b < a })
+        assertTrue(steps.map(::headTallness).zipWithNext().all { (a, b) -> b < a })
+        // Broken up: the line is all but gone, the peak still stands out of the glow.
+        assertTrue(needleOpacity(1f, held = false) < 0.1f)
+        assertTrue(headTallness(1f) > 0.6f)
         // A reading that is only held is fainter than the same reading live.
-        assertTrue(needleOpacity(0.2f, held = true) < needleOpacity(0.2f, held = false))
-        // The peak is also shorter the less clear the note is, but always stands out of the glow.
-        assertEquals(1f, headTallness(0.3f))
-        assertTrue(headTallness(3f) < headTallness(1f) && headTallness(6f) < headTallness(3f))
-        assertEquals(headTallness(6f), headTallness(30f))
-        assertTrue(headTallness(30f) > 0.6f)
+        assertTrue(needleOpacity(0f, held = true) < needleOpacity(0f, held = false))
     }
 }

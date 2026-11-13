@@ -196,6 +196,29 @@ class EngineTest {
     }
 
     @Test
+    fun `says at once when something else starts sounding with the string`() {
+        // An A string ringing alone; then another instrument comes in with a B.
+        fun readings(otherAmplitude: Double): List<TunerReading> {
+            val other = pluckedString(2.5, detune(246.94, 4.0), amplitude = otherAmplitude, decay = 5.0, seed = 8)
+            return run(engine(), mix(pluckedString(4.0, detune(A2, -6.0), decay = 4.0), at(4.0, 1.5, other), whiteNoise(4.0, 0.0005)))
+        }
+
+        // 10 dB quieter than the string: the string is still read, and right, but it is no
+        // longer the only thing there, and the first frame that holds the other note says so.
+        val quiet = readings(0.063)
+        assertTrue(quiet.between(0.8, 1.45).all { it.confidence > 0.95 }, "alone ${quiet.between(0.8, 1.45).minOf { it.confidence }}")
+        val after = quiet.between(1.5, 3.5).filter { it.voiced }
+        assertTrue(after.all { it.target!!.label == "A2" && abs(it.cents!! + 6) < 1.5 }, "readings ${after.map { it.cents }.distinct().take(8)}")
+        assertTrue(quiet.between(1.6, 3.5).all { it.voiced && it.confidence < 0.9 }, "confidence up to ${quiet.between(1.6, 3.5).maxOf { it.confidence }}")
+        val noticed = quiet.first { it.time > 1.5 && it.voiced && it.confidence < 0.92 }.time
+        assertTrue(noticed < 1.6, "noticed at $noticed")
+
+        // As loud as the string: whichever of the two is shown, it is half of what is sounding.
+        val loud = readings(0.2).between(1.6, 3.5).filter { it.voiced }
+        assertTrue(loud.isNotEmpty() && loud.all { it.confidence < 0.7 }, "loud: " + loud.filterIndexed { i, _ -> i % 6 == 0 }.take(14).map { "%.2f %s %s %.2f".format(it.time, it.source, it.target!!.label, it.confidence) })
+    }
+
+    @Test
     fun `reports how much the estimates scatter, and a moving pitch adds little`() {
         // A clean note: nothing to report.
         val clean = run(engine(), pluckedString(2.0, detune(A2, -8.0)))
@@ -207,7 +230,7 @@ class EngineTest {
         val spread = noisy.between(1.0, 2.0).map { it.spreadCents!! }
         assertTrue(spread.average() > 2, "noisy $spread")
 
-        // A peg turned at 30 cents a second: the needle trails by 8 cents, the spread shows under 2.
+        // A peg turned at 30 cents a second: the needle trails by 8 cents, the spread shows about 2.
         val signal = FloatArray(3 * SAMPLE_RATE)
         var phase = 0.0
         for (i in signal.indices) {
@@ -216,7 +239,7 @@ class EngineTest {
             signal[i] = (0.2 * (sin(phase) + 0.5 * sin(2 * phase) + 0.3 * sin(3 * phase))).toFloat()
         }
         val moving = run(engine(), signal).between(1.0, 2.5)
-        assertTrue(moving.all { it.spreadCents!! < 2.0 }, "moving ${moving.map { it.spreadCents }}")
+        assertTrue(moving.all { it.spreadCents!! < 2.5 }, "moving ${moving.map { it.spreadCents }}")
     }
 
     @Test

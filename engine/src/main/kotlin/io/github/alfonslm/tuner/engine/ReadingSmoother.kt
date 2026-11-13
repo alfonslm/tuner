@@ -28,6 +28,8 @@ class SmoothedReading(val cents: Double, val spreadCents: Double?, val inTune: B
  * measured on how far each estimate lands from the needle, less the recent
  * mean of that, so a pitch that is on the move (and the needle behind it)
  * counts for little: wobble and noise are scatter, a turn of the peg is not.
+ * It rises within a frame or two when the estimates start to disagree and
+ * falls back over the measuring time.
  */
 class ReadingSmoother(private val options: DisplayConfig, frameSeconds: Double) {
     private val recent = ArrayDeque<Double>()
@@ -81,7 +83,10 @@ class ReadingSmoother(private val options: DisplayConfig, frameSeconds: Double) 
             val off = cents - needle
             val stray = off - offMean
             offMean += max(trendWeight, 1.0 / (count - 1)) * stray
-            offSquare += max(spreadWeight, 1.0 / (count - 1)) * (stray * stray - offSquare)
+            // Quick to grow, slow to settle: one estimate well off the others shows within a
+            // frame or two, and it takes the full measuring time of agreement to forget it.
+            val weight = if (stray * stray > offSquare) GROW_WEIGHT else spreadWeight
+            offSquare += max(weight, 1.0 / (count - 1)) * (stray * stray - offSquare)
             if (count > MIN_SPREAD_READINGS) sqrt(offSquare) else null
         }
         val smoothed = value?.let { it + max(weight, 1.0 / count) * (median - it) } ?: median
@@ -99,6 +104,9 @@ class ReadingSmoother(private val options: DisplayConfig, frameSeconds: Double) 
     private companion object {
         /** A standard deviation of fewer readings than this says nothing. */
         const val MIN_SPREAD_READINGS = 4
+
+        /** How much of the way the scatter goes, per frame, towards an estimate that lies further out than it. */
+        const val GROW_WEIGHT = 0.4
 
         /** How quickly a steady distance between the estimates and the needle stops counting as scatter. */
         const val TREND_MS = 150.0

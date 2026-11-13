@@ -74,7 +74,13 @@ data class TunerReading(
      * next to it. `null` until a note has given enough readings to tell.
      */
     val spreadCents: Double? = null,
-    /** 0..1 */
+    /**
+     * 0..1: how much of what is sounding is the note being read, in this frame
+     * alone. Near 1 for one string on its own; lower at once when something
+     * else sounds with it, whether other strings ringing on or another
+     * instrument. (Locked: the share of the energy in the string's band that
+     * lies on its partials. Searching: how periodic the sound is.)
+     */
     val confidence: Double,
     /** Within tolerance, and has been for a moment. */
     val inTune: Boolean,

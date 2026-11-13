@@ -47,6 +47,13 @@ class FocusedEstimate(
      * near the target is another string's. Never [valid].
      */
     val faded: Boolean = false,
+    /**
+     * 0..1: how much of everything sounding in the string's band is this string,
+     * in this frame. Always taken on the whole sound, also when the pitch was
+     * measured with the strings that were already ringing taken away: those are
+     * still a second signal, and this is what says so, at once.
+     */
+    val purity: Double = 0.0,
 )
 
 /**
@@ -203,6 +210,7 @@ class FocusedDetector(
                 profile.subharmonic <= options.maxSubharmonic,
             fresh = fresh,
             faded = partials.faded,
+            purity = stringShare(this.power, frequency, model, geometry),
         )
     }
 

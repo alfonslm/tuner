@@ -1,6 +1,8 @@
 package io.github.alfonslm.tuner.engine
 
 import io.github.alfonslm.tuner.dsp.AnalyzerPool
+import io.github.alfonslm.tuner.dsp.CombGeometry
+import io.github.alfonslm.tuner.dsp.stringShare
 import io.github.alfonslm.tuner.dsp.FocusedDetector
 import io.github.alfonslm.tuner.dsp.FocusedDetectorOptions
 import io.github.alfonslm.tuner.dsp.FocusedEstimate
@@ -26,6 +28,7 @@ import io.github.alfonslm.tuner.music.findInstrument
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.log10
+import kotlin.math.min
 import kotlin.math.log2
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -309,7 +312,7 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
                 lock.overtoneSince = null
                 lock.lastHeard = time
                 val target = followTarget(focus.frequency, time)
-                return Pitch(focus.frequency, target, PitchSource.FOCUSED, focus.profile.salience, lock.frame.size)
+                return Pitch(focus.frequency, target, PitchSource.FOCUSED, focus.purity, lock.frame.size)
             }
         }
 
@@ -360,8 +363,14 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
     }
 
     /** A wide-band reading for display, if it is clear enough to be shown at all. */
-    private fun shown(wide: PitchEstimate, target: Target): Pitch? =
-        if (wide.clarity >= config.wide.minClarity) Pitch(wide.frequency, target, PitchSource.WIDE, wide.clarity, wideFrame.size) else null
+    private fun shown(wide: PitchEstimate, target: Target): Pitch? {
+        if (wide.clarity < config.wide.minClarity) return null
+        // How periodic the sound is, and (the pitch may have been found with the strings that were
+        // already ringing taken away) how much of all that is sounding this note is.
+        val geometry = CombGeometry(wideAnalyzer.binHz, wideAnalyzer.lobeHz, min(config.maxPartialHz, 0.4 * sampleRate))
+        val share = stringShare(widePower, wide.frequency, preset.harmonics, geometry)
+        return Pitch(wide.frequency, target, PitchSource.WIDE, min(wide.clarity, share), wideFrame.size)
+    }
 
     /**
      * Hand the lock over to a neighbouring target when the string has been tuned

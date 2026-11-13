@@ -309,6 +309,7 @@ private fun Display(state: TunerUiState, modifier: Modifier = Modifier) {
                     cents = cents?.toFloat(),
                     window = window,
                     spreadCents = shown?.spreadCents?.toFloat(),
+                    confidence = shown?.confidence?.toFloat(),
                     tone = tone,
                     inTuneCents = state.config.display.inTuneCents.toFloat(),
                     dimmed = !state.live,

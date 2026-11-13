@@ -127,6 +127,44 @@ private val NO_SUPPORT = DoubleArray(PRIMES.size)
 private val NO_MATCH = HarmonicProfile(0.0, 0.0, NO_SUPPORT, 0.0, 0.0)
 private val LN2 = ln(2.0)
 
+/** Sounds below this are not held against a note: rumble, handling noise, mains hum. */
+private const val SHARE_FROM_HZ = 60.0
+
+/**
+ * How much of everything that is sounding is a string at [f0], 0..1: the
+ * energy on its partials as a share of all the energy from [SHARE_FROM_HZ] (or
+ * from below the string, if that is lower) up to its last partial, less what
+ * would lie on the partials by chance. One string alone is close to 1. A
+ * second note as loud as the first brings both to about one half, whether it
+ * is higher or lower, a ringing string or another instrument.
+ *
+ * Unlike [HarmonicProfile.salience] this also counts what sounds below the
+ * string, where a lower note has most of its energy.
+ */
+fun stringShare(power: DoubleArray, f0: Double, model: HarmonicModel, geometry: CombGeometry): Double {
+    val (binHz, lobeHz, maxHz) = geometry
+    val count = partialCount(f0, model, maxHz)
+    val halfBins = max(2, (lobeHz / binHz).roundToInt())
+    val lastBin = power.size - 1
+    var onPartials = 0.0
+    var partialBins = 0
+    var top = 0
+    for (k in 1..count) {
+        val centre = (partialFrequency(f0, k, model.inharmonicity) / binHz).roundToInt()
+        val from = max(1, centre - halfBins)
+        val to = min(lastBin, centre + halfBins)
+        for (b in from..to) onPartials += power[b]
+        partialBins += max(0, to - from + 1)
+        top = to
+    }
+    val bottom = max(1, min((min(SHARE_FROM_HZ, 0.7 * f0) / binHz).roundToInt(), top))
+    var all = 0.0
+    for (b in bottom..top) all += power[b]
+    if (!(all > 0) || top <= bottom) return 0.0
+    val chance = min(0.95, partialBins.toDouble() / (top - bottom + 1))
+    return ((onPartials / all - chance) / (1 - chance)).coerceIn(0.0, 1.0)
+}
+
 /** Measures how well the (unfiltered) spectrum matches a string sounding at [f0]. */
 fun harmonicProfile(power: DoubleArray, f0: Double, model: HarmonicModel, geometry: CombGeometry): HarmonicProfile {
     val (binHz, lobeHz, maxHz) = geometry

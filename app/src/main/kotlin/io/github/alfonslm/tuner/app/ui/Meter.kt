@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -37,9 +38,6 @@ private val MIN_HALF_WIDTH = 5.dp
 
 /** The glow reaches this share of the meter's height: lower than a clear note's peak. */
 private const val GLOW_TALLNESS = 0.6f
-
-/** A broken-up signal's peak is this share of the meter's height: the glow's, and a little. */
-private const val NOISY_TALLNESS = 0.68f
 
 /** How opaque the glow is at its middle... */
 private const val GLOW_OPACITY = 0.3f
@@ -112,44 +110,71 @@ fun scaleWindow(cents: Float?): ScaleWindow {
     return ScaleWindow(side * range * (1 - TARGET_INSET), range)
 }
 
-/** The line is solid up to this much scatter (cents, one standard deviation)... */
+/** A reading is fully clear up to this much scatter (cents, one standard deviation)... */
 private const val CLEAN_SPREAD_CENTS = 1f
 
-/** ...and all but gone from this much on. */
+/** ...and as unclear as it gets from this much on. */
 private const val NOISY_SPREAD_CENTS = 6f
+
+/** A note's first readings, before their scatter is known, count as this unclear. */
+private const val UNKNOWN_UNCLARITY = 0.4f
+
+/** A reading is fully clear while the note is at least this share of what is sounding... */
+private const val CLEAN_CONFIDENCE = 0.92f
+
+/** ...and as unclear as it gets when it is no more than this. */
+private const val MIXED_CONFIDENCE = 0.55f
+
+/** How solid the line still is in a fully unclear reading: all but gone. */
 private const val NOISY_OPACITY = 0.06f
 
-/** A note's first readings, before their scatter is known. */
-private const val UNKNOWN_OPACITY = 0.6f
+/** A fully unclear reading's peak is this share of the meter's height: the glow's, and a little. */
+private const val NOISY_TALLNESS = 0.68f
+
+/** The glow of a fully unclear reading is at least this wide (cents, as a standard deviation). */
+private const val UNCLEAR_SPREAD_CENTS = 5f
 
 /** A reading that is only being held on screen (the note has stopped) is drawn this much fainter, glow and all. */
 private const val HELD_DIMMING = 0.45f
 
 /**
- * How solid the line in the needle is drawn: the reading is only as crisp as
- * the note is clear. Solid for a clean signal, fading as the estimates behind
- * it scatter, all but gone when the sound is broken up; fainter again for a
- * reading that is only held.
+ * How far a reading is from being one clear note, 0 (clear) to 1 (broken up).
+ * Two things say so, and the worse one counts:
+ *
+ *  - the estimates behind the reading scatter ([spreadCents]): noise, a dying
+ *    note, something beating against it;
+ *  - the note is not all that is sounding ([confidence], the share of the
+ *    sound that is this note): other strings ringing on, somebody else playing.
+ *
+ * Both are known within a frame or two of the sound changing, which is the
+ * point: the needle is an average and takes its time, this does not.
  */
-fun needleOpacity(spreadCents: Float?, held: Boolean): Float {
-    val clear = if (spreadCents == null) {
-        UNKNOWN_OPACITY
+fun unclarity(spreadCents: Float?, confidence: Float?): Float {
+    val scattered = if (spreadCents == null) {
+        UNKNOWN_UNCLARITY
     } else {
-        val noisy = ((spreadCents - CLEAN_SPREAD_CENTS) / (NOISY_SPREAD_CENTS - CLEAN_SPREAD_CENTS)).coerceIn(0f, 1f)
-        1f - (1f - NOISY_OPACITY) * noisy
+        ((spreadCents - CLEAN_SPREAD_CENTS) / (NOISY_SPREAD_CENTS - CLEAN_SPREAD_CENTS)).coerceIn(0f, 1f)
     }
+    val mixed = if (confidence == null) 0f else ((CLEAN_CONFIDENCE - confidence) / (CLEAN_CONFIDENCE - MIXED_CONFIDENCE)).coerceIn(0f, 1f)
+    return max(scattered, mixed)
+}
+
+/**
+ * How solid the line in the needle is drawn: the reading is only as crisp as
+ * the note is clear. Solid for a clear note, all but gone for a broken-up one
+ * ([unclarity]); fainter again for a reading that is only held.
+ */
+fun needleOpacity(unclear: Float, held: Boolean): Float {
+    val clear = 1f - (1f - NOISY_OPACITY) * unclear.coerceIn(0f, 1f)
     return if (held) clear * HELD_DIMMING else clear
 }
 
 /**
  * How tall the needle's peak is drawn, as a share of the meter's height: full
- * for a clear note, shorter the more the estimates scatter, down to where it
- * barely stands out of the glow.
+ * for a clear note, shorter the less clear, down to where it barely stands out
+ * of the glow.
  */
-fun headTallness(spreadCents: Float?): Float {
-    val noisy = (((spreadCents ?: UNKNOWN_SPREAD_CENTS) - CLEAN_SPREAD_CENTS) / (NOISY_SPREAD_CENTS - CLEAN_SPREAD_CENTS)).coerceIn(0f, 1f)
-    return 1f - (1f - NOISY_TALLNESS) * noisy
-}
+fun headTallness(unclear: Float): Float = 1f - (1f - NOISY_TALLNESS) * unclear.coerceIn(0f, 1f)
 
 /** Space left at either end of the scale; the waterfall below uses the same so the two line up. */
 val METER_INSET = 2.dp
@@ -162,15 +187,18 @@ val METER_INSET = 2.dp
  * its middle towards all its edges, is as wide as the estimates behind the
  * reading scatter (their standard deviation is its sigma). A bulge in it,
  * several times narrower, is where their average, the reading, is. A line
- * through the middle is only as crisp as the note is clear ([needleOpacity]):
- * solid on a clean signal, fading as the estimates scatter, gone when the
- * sound is broken up. The bulge and the line are also shorter the less clear
- * the note is ([headTallness]), and the glow is low. So a clear note is a tall
- * sharp needle, and a weak or broken-up one a short soft peak that runs out
- * into a wide low glow.
+ * through the middle is only as crisp as the note is clear ([unclarity],
+ * [needleOpacity]): solid for one clean note, fading as the estimates scatter
+ * or as other sounds join it, gone when the sound is broken up. The bulge and
+ * the line are also shorter the less clear the note is ([headTallness]), and
+ * the glow is low and at least a few cents wide then. So a clear note is a
+ * tall sharp needle, and a weak, noisy or crowded one a short soft peak that
+ * runs out into a wide low glow. The look changes within a frame or two of the
+ * sound changing, faster than the reading itself, which is an average.
  *
  * @param cents offset to show, or `null` to park the needle on the target
  * @param spreadCents standard deviation of the estimates behind [cents], if known
+ * @param confidence the share of what is sounding that is the note being read, if known
  * @param dimmed true for a held reading (the note has stopped)
  * @param window what the scale shows, see [scaleWindow]
  */
@@ -178,6 +206,7 @@ val METER_INSET = 2.dp
 fun Meter(
     cents: Float?,
     spreadCents: Float?,
+    confidence: Float?,
     tone: Color,
     inTuneCents: Float,
     dimmed: Boolean,
@@ -197,23 +226,26 @@ fun Meter(
     val tickStep = labelStep / 5
     val labels = rememberTextMeasurer()
     val labelStyle = MaterialTheme.typography.labelSmall.copy(color = TunerColors.Muted)
+    // How clear the reading is decides how the head looks. Getting worse shows at once;
+    // getting better takes a moment, so that the head does not flicker.
+    val unclearNow = if (cents == null) 0f else unclarity(spreadCents, confidence)
+    val shown = remember { floatArrayOf(0f) }
+    val worse = unclearNow > shown[0]
+    shown[0] = unclearNow
+    val unclear by animateFloatAsState(
+        targetValue = unclearNow,
+        animationSpec = tween(durationMillis = if (worse) 50 else 300),
+        label = "unclear",
+    )
     val sigma by animateFloatAsState(
-        targetValue = if (cents == null) 0f else spreadCents ?: UNKNOWN_SPREAD_CENTS,
-        animationSpec = tween(durationMillis = 200),
+        targetValue = if (cents == null) 0f else max(spreadCents ?: UNKNOWN_SPREAD_CENTS, unclearNow * UNCLEAR_SPREAD_CENTS),
+        animationSpec = tween(durationMillis = if (worse) 50 else 300),
         label = "sigma",
     )
-    val tallness by animateFloatAsState(
-        targetValue = if (cents == null) 1f else headTallness(spreadCents),
-        animationSpec = tween(durationMillis = 200),
-        label = "tallness",
-    )
-    // A reading that is only held is fainter as a whole, skirt included.
+    val tallness = headTallness(unclear)
+    val needleAlpha = needleOpacity(unclear, held = false)
+    // A reading that is only held is fainter as a whole, glow included.
     val headDim by animateFloatAsState(if (dimmed || cents == null) HELD_DIMMING else 1f, label = "headDim")
-    val needleAlpha by animateFloatAsState(
-        targetValue = if (cents == null) 1f else needleOpacity(spreadCents, held = false),
-        animationSpec = tween(durationMillis = 200),
-        label = "needleAlpha",
-    )
 
     // The same information is spoken by the cents readout next to it.
     Column(modifier.clearAndSetSemantics { }, verticalArrangement = Arrangement.spacedBy(6.dp)) {

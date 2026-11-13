@@ -49,6 +49,7 @@ private fun reading(
     inTune: Boolean = false,
     instrumentId: String = "guitar",
     spreadCents: Double? = 0.3,
+    confidence: Double = 0.98,
 ) = TunerReading(
     time = 10.0,
     delay = if (cents != null) 0.115 else 0.0,
@@ -60,7 +61,7 @@ private fun reading(
     frequency = cents?.let { target.frequency * centsToRatio(it) },
     cents = cents,
     spreadCents = spreadCents.takeIf { cents != null },
-    confidence = 0.95,
+    confidence = confidence,
     inTune = inTune,
     lock = if (locked) LockInfo(target, pinned, widthCents) else null,
 )
@@ -179,6 +180,17 @@ fun LockedInTune() = Screen(
     },
 ) {
     val focused = reading(it[3], cents = 0.6, inTune = true)
+    focused to focused
+}
+
+/** The estimates agree, but the string is only two thirds of what is sounding: somebody else is playing. */
+@PreviewTest
+@PhonePreview
+@Composable
+fun LockedWithSomethingElseSounding() = Screen(
+    trace = trace { age -> 6.0 },
+) {
+    val focused = reading(it[1], cents = 6.0, widthCents = 41.0, spreadCents = 0.8, confidence = 0.66)
     focused to focused
 }
 

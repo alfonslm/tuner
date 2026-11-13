@@ -475,20 +475,37 @@ settings. The plain average stayed.
 What the average hides is shown next to it. `TunerReading.spreadCents` is the
 standard deviation of the estimates over the last 400 ms, measured on how far
 each lands from the needle, less the recent mean of that distance (so a peg
-being turned, with the needle steadily behind, adds little: under 2 cents at
+being turned, with the needle steadily behind, adds little: about 2 cents at
 30 cents a second).
 
-The meter draws it into the needle itself, which is three soft things laid
-over each other. A glow, fading from its middle towards all its edges, has
-the scatter as its sigma: it is where single estimates fall. A bulge in it,
-four times narrower, is where their average, the reading, is. A line through
-the middle is only as crisp as the note is clear: solid up to 1 cent of
-scatter, fading from there, all but gone from 6 cents on. The bulge and the
-line also get shorter the less clear the note is, and the glow is low. A clear
-note is a tall sharp needle; a weak or broken-up one a short soft peak that
-runs out into a wide low glow. (The engine's `confidence` would have been the
-obvious thing to fade by, but on the recordings it sits between 0.96 and 1.0
-whatever the reading is worth; the scatter is what tells them apart.)
+The needle is an average, and an average is slow by design. Whether it can be
+trusted is a different question and should not wait for it: when somebody
+else starts to play, the reading should look doubtful at once, not drift for
+half a second first. Two things are therefore reported with every reading,
+both taken from the last frame or two:
+
+- **the scatter** above, which rises to an estimate that lies further out
+  than it within two frames and falls back over 400 ms;
+- **`confidence`**: how much of everything that is sounding is the note being
+  read (`stringShare`: the energy on the string's partials as a share of all
+  the energy from 60 Hz up to its last partial, less what would lie there by
+  chance). It is taken on the whole sound, also when the pitch was measured
+  with the ringing strings taken away. One string alone is near 1; a second
+  note as loud brings it to about a half, whether higher or lower, a ringing
+  string or another instrument. On the recordings a sustained note scores
+  0.95 to 1.0, and the high E's dying tail 0.75.
+
+The meter turns the worse of the two into how the needle looks (`unclarity`:
+clear up to 1 cent of scatter and down to 92 % share, fully unclear from 6
+cents or 55 %). The needle is three soft things laid over each other. A glow,
+fading from its middle towards all its edges, is as wide as the scatter (and
+at least a few cents wide when the note has company). A bulge in it, four
+times narrower, is where the reading is. A line through the middle is only as
+crisp as the note is clear. The less clear, the fainter the line and the
+shorter the peak, which then runs out into the low, wide glow. One clean note
+is a tall sharp needle; a weak, noisy or crowded one a short soft peak in a
+glow. The look follows a change for the worse in 50 ms and a change for the
+better in 300, so it warns quickly and does not flicker.
 
 Nothing is shown for 150 ms after a pluck is noticed, nor in a frame that is
 10 dB louder than the quietest of the three before it: that is the pluck
@@ -652,7 +669,7 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
 
 `./gradlew test` needs no device. It runs:
 
-- **73 engine tests** against a plucked-string synthesizer (inharmonic
+- **74 engine tests** against a plucked-string synthesizer (inharmonic
   partials with individual decay, weak fundamental, white noise, mains hum):
   - each guitar string is identified, locked within 0.5 s of the pluck, and
     read to within 0.3 cent;
@@ -672,6 +689,10 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
     the partials alone would send the lock to the D string;
   - a pluck after the string was stopped by hand shows nothing until it reads
     the new pitch;
+  - when another instrument comes in 10 dB below a ringing string, the string
+    is still read to within 1.5 cents and the confidence falls below 0.92
+    within 0.1 s; when it comes in as loud, whatever is shown has a confidence
+    under 0.7;
   - in noise where wide-band detection fails on more than 15 of 20 trials, the
     focused detector is right on at least 19;
   - noise and silence never produce a reading; every other string of the
@@ -702,7 +723,7 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
     it chooses only among the tunings in use, tells standard from Drop D by
     the low string, reaches down to the B0 of a 5-string bass when that is in
     use, and recognises a custom tuning.
-- **27 app tests**.
+- **28 app tests**.
   - Nine drive the real pipeline (view model → flow → engine) with a synthetic
     microphone: a tone gets locked and shown, its spectrogram rows arrive
     without a gap, stopping closes the stream, a microphone that fails to open
