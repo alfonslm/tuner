@@ -73,7 +73,11 @@ class FocusedDetector(
     private val acf: DoubleArray
     private val freshPower: DoubleArray
     private val history: SpectralHistory?
+    private val partials: PartialPitch
     private var primed = false
+
+    /** The string's stiffness as measured so far; see [PartialPitch]. */
+    val inharmonicity: Double get() = partials.inharmonicity
 
     init {
         val period = sampleRate / targetHz
@@ -88,6 +92,7 @@ class FocusedDetector(
         comb = DoubleArray(analyzer.bins)
         acf = DoubleArray(analyzer.maxLag + 1)
         freshPower = DoubleArray(analyzer.bins)
+        partials = PartialPitch(model, geometry, analyzer.fftSize.toDouble() / frame)
         history = options.fresh?.let {
             // Compare only with audio that ended before the current window began.
             val guard = (frame + options.blockSize - 1) / options.blockSize + 1
@@ -130,6 +135,8 @@ class FocusedDetector(
     fun pluck() {
         primed = false
         history?.release()
+        // Until the attack has left the window, the partials are a mix of two notes.
+        partials.pause((frameLength + options.blockSize - 1) / options.blockSize + ATTACK_FRAMES)
     }
 
     val frameLength: Int get() = analyzer.frameLength
@@ -174,8 +181,10 @@ class FocusedDetector(
         if (best < 0) return null
 
         val peak = parabolicPeak(acf, best)
-        val frequency = analyzer.sampleRate / peak.position
-        val profile = harmonicProfile(power, frequency, model, geometry)
+        val coarse = analyzer.sampleRate / peak.position
+        val profile = harmonicProfile(power, coarse, model, geometry)
+        // The autocorrelation says which note this is and roughly where; the partials say exactly.
+        val frequency = partials.measure(power, coarse) ?: coarse
         return FocusedEstimate(
             frequency = frequency,
             profile = profile,
@@ -186,5 +195,10 @@ class FocusedDetector(
                 profile.subharmonic <= options.maxSubharmonic,
             fresh = fresh,
         )
+    }
+
+    private companion object {
+        /** Frames a pluck's attack lasts, beyond the one in which it is noticed. */
+        const val ATTACK_FRAMES = 3
     }
 }

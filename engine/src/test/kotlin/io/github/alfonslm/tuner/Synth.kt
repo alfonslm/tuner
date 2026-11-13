@@ -64,6 +64,57 @@ fun pluckedString(
     return FloatArray(length) { if (peak > 0) (out[it] * amplitude / peak).toFloat() else 0f }
 }
 
+/**
+ * A steel-string guitar's high E as a microphone in the room hears it, which
+ * is not one clean harmonic series:
+ *
+ *  - the string is stiff, so its partials are progressively sharp ([inharmonicity]);
+ *  - it vibrates in two planes at slightly different frequencies, so every
+ *    partial is a pair a fraction of a hertz apart that beats;
+ *  - the open A and low E strings share partials with it (3·A2 and 4·E2 are
+ *    both an E4) and ring along at those, at their own, stiffer, pitch.
+ *
+ * @param lowStringsCents how far the A and low E strings are out of tune
+ */
+fun guitarHighE(
+    seconds: Double,
+    offsetCents: Double = 0.0,
+    inharmonicity: Double = 2e-5,
+    lowStringsCents: Double = 0.0,
+    sympathetic: Double = 1.0,
+): FloatArray {
+    val length = (seconds * SAMPLE_RATE).roundToInt()
+    val out = DoubleArray(length)
+    val random = Rng(5)
+    fun add(frequency: Double, amplitude: Double, rise: Double, decay: Double) {
+        val phase = 2 * PI * random.next()
+        val omega = 2 * PI * frequency / SAMPLE_RATE
+        for (i in 0 until length) {
+            val t = i.toDouble() / SAMPLE_RATE
+            out[i] += amplitude * (if (rise > 0) 1 - exp(-t / rise) else 1.0) * exp(-t / decay) * sin(omega * i + phase)
+        }
+    }
+    val f0 = detune(329.63, offsetCents)
+    for (k in 1..10) {
+        val f = k * f0 * sqrt(1 + inharmonicity * k * k)
+        val a = abs(sin(k * PI * 0.15)) / k
+        val decay = 2.5 / (1 + 0.25 * (k - 1))
+        add(f, a, 0.0, decay)
+        add(f + 0.3 + 0.5 * random.next(), a * (0.3 + 0.4 * random.next()), 0.0, decay * 1.4)
+    }
+    // Driven through the bridge, so they come up over a fifth of a second and outlast the plucked string.
+    val a2 = detune(110.0, lowStringsCents)
+    val e2 = detune(82.41, lowStringsCents)
+    for ((m, level) in listOf(3 to 0.35, 6 to 0.25, 9 to 0.08)) {
+        add(m * a2 * sqrt(1 + 6e-5 * m * m), sympathetic * level * abs(sin(m / 3 * PI * 0.15)) / (m / 3), 0.2, 4.0)
+    }
+    for ((m, level) in listOf(4 to 0.3, 8 to 0.2, 12 to 0.06)) {
+        add(m * e2 * sqrt(1 + 8e-5 * m * m), sympathetic * level * abs(sin(m / 4 * PI * 0.15)) / (m / 4), 0.2, 4.0)
+    }
+    val peak = out.maxOf { abs(it) }
+    return FloatArray(length) { (0.2 * out[it] / peak).toFloat() }
+}
+
 fun whiteNoise(seconds: Double, rms: Double, seed: Int = 7): FloatArray {
     val random = Rng(seed)
     // Sum of uniforms ≈ Gaussian.

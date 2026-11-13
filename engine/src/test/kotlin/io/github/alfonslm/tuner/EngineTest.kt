@@ -118,27 +118,34 @@ class EngineTest {
     }
 
     @Test
-    fun `holds the needle still when another string's overtone beats against the note`() {
+    fun `is not shaken by another string's overtone beating against the fundamental`() {
         // A lower string that is 20 cents out, set ringing by the pluck: its overtone sounds next to
-        // the high E and the two beat about three times a second. The estimate swings with the beat.
+        // the high E's fundamental and the two beat about three times a second. Read off the
+        // loudest partials, the pitch would swing by ten cents; the other partials know better.
         val seconds = 3.0
         val beating = FloatArray((seconds * SAMPLE_RATE).toInt()) { i ->
             val t = i.toDouble() / SAMPLE_RATE
             (0.05 * (1 - kotlin.math.exp(-t / 0.15)) * kotlin.math.exp(-t / 3.0) * sin(2 * PI * detune(E4, 20.0) * t)).toFloat()
         }
         val signal = mix(pluckedString(seconds, E4, inharmonicity = 2e-5, decay = 2.0), beating)
-        fun swing(config: TunerConfig): Double {
-            val cents = run(engine(config), signal).between(0.8, 2.8).map { it.cents!! }
-            return cents.max() - cents.min()
+        val cents = run(engine(), signal).between(0.8, 2.8).map { it.cents!! }
+        assertTrue(cents.all { abs(it) < 1.0 }, "needle between ${cents.min()} and ${cents.max()}")
+    }
+
+    @Test
+    fun `reads a guitar's high E true while the low strings ring along`() {
+        // What a phone hears: a stiff string, every partial a slowly beating pair, and the open
+        // A and low E strings ringing along at the partials they share with it, here 8 cents sharp.
+        for (lowStrings in listOf(8.0, -8.0)) {
+            val readings = run(engine(), guitarHighE(4.0, lowStringsCents = lowStrings)).between(0.6, 3.6)
+            assertTrue(readings.all { it.voiced }, "low strings $lowStrings: silent at ${readings.filter { !it.voiced }.map { it.time }}")
+            val cents = readings.map { it.cents!! }
+            assertTrue(abs(cents.average() - 0.3) < 0.5, "low strings $lowStrings: mean ${cents.average()}")
+            assertTrue(cents.max() - cents.min() < 1.5, "low strings $lowStrings: ${cents.min()}..${cents.max()}")
+            // The spectrogram's stripe is where the needle is.
+            val stripe = readings.mapNotNull { it.spectrum }.map { row -> row.levels.indices.maxBy { row.levels[it] } - 50.0 }
+            assertTrue(abs(stripe.average() - cents.average()) < 0.7, "stripe ${stripe.average()}, needle ${cents.average()}")
         }
-        // What the estimate does, shown by a needle that believes every reading...
-        val raw = swing(guitar.copy(display = guitar.display.copy(smoothingMs = 0.0)))
-        // ...and what the needle does.
-        val steadied = swing(guitar)
-        // The spread reports what the needle is hiding.
-        assertTrue(run(engine(), signal).between(0.8, 2.8).map { it.spreadCents!! }.average() > 2)
-        assertTrue(raw > 7, "estimate swings by $raw")
-        assertTrue(steadied < 0.6 * raw, "needle swings by $steadied, estimate by $raw")
     }
 
     @Test

@@ -77,10 +77,15 @@ class SpectralHistory(
     }
 
     /**
-     * The share of the energy in [power] that stands well above what the last
-     * few frames held on average, 0..1; or -1 if there is nothing old enough to
+     * The share of the energy in [power] that stands well above anything the
+     * last few frames held, 0..1; or -1 if there is nothing old enough to
      * compare with. Close to zero for anything steady or fading, noise
      * included, and large when a note starts.
+     *
+     * "Anything", not "the average": two tones a few cents apart beat, and the
+     * swell after a quiet moment of the beat is several times the average of
+     * the frames before it. It is never much more than the swell before,
+     * though, which a note that has just been plucked is.
      */
     fun novelty(power: DoubleArray): Double {
         var count = 0
@@ -89,14 +94,13 @@ class SpectralHistory(
             if (storedAt[entry] == Long.MIN_VALUE || frame - storedAt[entry] < guard) continue
             count++
             val past = stored[entry]
-            for (b in 0 until bins) recent[b] += past[b]
+            for (b in 0 until bins) if (past[b] > recent[b]) recent[b] = past[b]
         }
         if (count == 0) return -1.0
         var total = 0.0
         var new = 0.0
-        val threshold = NOVELTY_FACTOR / count
         for (b in 0 until bins) {
-            new += max(0.0, power[b] - threshold * recent[b])
+            new += max(0.0, power[b] - NOVELTY_FACTOR * recent[b])
             total += power[b]
         }
         return if (total > 0) new / total else 0.0

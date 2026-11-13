@@ -7,7 +7,9 @@ import io.github.alfonslm.tuner.dsp.FocusedDetector
 import io.github.alfonslm.tuner.dsp.FocusedDetectorOptions
 import io.github.alfonslm.tuner.dsp.FocusedEstimate
 import io.github.alfonslm.tuner.dsp.HarmonicModel
+import io.github.alfonslm.tuner.dsp.PartialPitch
 import io.github.alfonslm.tuner.dsp.PitchEstimate
+import io.github.alfonslm.tuner.dsp.SpectralAnalyzer
 import io.github.alfonslm.tuner.dsp.WideDetector
 import io.github.alfonslm.tuner.dsp.buildComb
 import io.github.alfonslm.tuner.dsp.harmonicProfile
@@ -157,6 +159,40 @@ class DspTest {
         val focusError = abs(cents(focused(signal, 20000, 110.0, 35.0)!!.frequency, 110.0))
         assertTrue(focusError < 1, "focused error $focusError")
         assertTrue(focusError < wideError / 3, "focused $focusError vs wide $wideError")
+    }
+
+    @Test
+    fun `the partials give the pitch of a stiff string and its stiffness`() {
+        // A string twice as stiff as the preset assumes, 7 cents sharp.
+        val f = detune(110.0, 7.0)
+        val analyzer = SpectralAnalyzer(SAMPLE_RATE, 16384, 7200)
+        val geometry = CombGeometry(analyzer.binHz, analyzer.lobeHz, 5000.0)
+        val partials = PartialPitch(HarmonicModel(8, 5e-5), geometry, 16384.0 / 7200)
+        val power = DoubleArray(analyzer.bins)
+        val signal = pluckedString(0.5, f, inharmonicity = 1e-4)
+        analyzer.powerSpectrum(signal.copyOfRange(4000, 4000 + 7200), power)
+        // Told only roughly where to look.
+        val measured = assertNotNull(partials.measure(power, detune(f, 4.0)))
+        assertTrue(abs(cents(measured, f)) < 0.05, "error ${cents(measured, f)}")
+        assertTrue(abs(partials.inharmonicity - 1e-4) < 5e-6, "stiffness ${partials.inharmonicity}")
+    }
+
+    @Test
+    fun `a partial that disagrees with the others is left out`() {
+        // The fundamental, the loudest partial, has a neighbour 15 cents above it nearly as loud:
+        // together they read about 6 cents sharp. The other seven partials are untouched.
+        val f = 329.63
+        val neighbour = pluckedString(0.5, detune(f, 15.0), partialAmplitudes = doubleArrayOf(1.0), amplitude = 0.12)
+        val signal = mix(pluckedString(0.5, f, partials = 8), neighbour)
+        val analyzer = SpectralAnalyzer(SAMPLE_RATE, 8192, 5760)
+        val geometry = CombGeometry(analyzer.binHz, analyzer.lobeHz, 5000.0)
+        val partials = PartialPitch(HarmonicModel(8, 0.0), geometry, 8192.0 / 5760)
+        val power = DoubleArray(analyzer.bins)
+        for (start in listOf(2000, 6000, 10000, 14000)) {
+            analyzer.powerSpectrum(signal.copyOfRange(start, start + 5760), power)
+            val measured = assertNotNull(partials.measure(power, detune(f, 3.0)))
+            assertTrue(abs(cents(measured, f)) < 0.3, "at $start: ${cents(measured, f)}")
+        }
     }
 
     @Test

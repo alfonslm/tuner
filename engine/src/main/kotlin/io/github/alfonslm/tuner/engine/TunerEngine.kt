@@ -230,7 +230,9 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         }
         if (!ring.copyLatest(spectrumFrame)) return null
         val levels = FloatArray(SPECTRUM_COLUMNS)
-        if (audible) analysis.compute(spectrumFrame, levels)
+        // Laid over each other with the stiffness measured on this string, if it is the locked one.
+        val stiffness = lock?.takeIf { it.target.id == target.id }?.detector?.inharmonicity ?: preset.harmonics.inharmonicity
+        if (audible) analysis.compute(spectrumFrame, levels, stiffness)
         return SpectrumRow(
             // The row describes the audio in its window, which is centred half a window back.
             time = time - analysis.frameLength / (2.0 * sampleRate),

@@ -128,6 +128,7 @@ engine/src/main/kotlin/io/github/alfonslm/tuner/
     WideDetector.kt         note-agnostic pitch detector (acquisition, watchdog)
     HarmonicComb.kt         string model: comb filter + harmonic validation
     SpectralHistory.kt      what was sounding before the last pluck, to take it away
+    PartialPitch.kt         the locked reading: every partial measured on its own, stiffness learned
     FocusedDetector.kt      target-aware pitch detector (tracking)
     FoldedSpectrum.kt       one row of the spectrogram: partials folded onto a cents scale
   music/
@@ -244,6 +245,47 @@ gain
 | size the window for this one note (120 to 150 ms) | fine enough to keep the partials of *other* strings out of each pass band |
 | narrow the comb as the string approaches | maximum selectivity exactly when the last few cents matter |
 
+### Reading the pitch off the partials
+
+The autocorrelation peak says which note this is and roughly where. It is one
+number for the whole sound, and the loudest partials decide it. On a string
+instrument those are the lowest ones, and they are the least trustworthy:
+
+- **Other open strings ring along** at exactly the partials they share with
+  the plucked one. On a guitar the third partial of the A string and the
+  fourth of the low E both lie on the high E's fundamental; an equal-tempered
+  fifth puts the A's 2 cents above it, the low strings' stiffness adds to
+  that, and so does any amount they are out of tune. They are driven through
+  the bridge, come up over a fifth of a second and outlast the plucked note.
+- **A string is stiff**: partial k sounds at k·f0·√(1 + B·k²), progressively
+  sharp, and how much weight the upper partials get moves the reading.
+
+A screenshot from a phone showed both: the needle a few cents sharp of the
+spectrogram's stripe and wandering twice a second, the stripe steady. The
+simulation of that (a stiff high E, every partial a beating pair, the A and
+low E strings ringing along 8 cents sharp) read +2.1 cents on average and
+wandered from -0.3 to +4.2.
+
+So the locked reading is taken from the partials one at a time
+(`PartialPitch`). Each one's frequency is the peak of the spectrum next to
+where it is expected, interpolated to a small fraction of a bin; with the
+stiffness taken out, each is an estimate of the fundamental. They are combined
+so that a partial counts for more the higher it is (the same error in Hz is k
+times fewer cents) and the stronger it is, and so that the ones that disagree
+are left out: a weighted median finds what most of the weight agrees on, and
+only the partials within about 2 cents of it are averaged. The same
+simulation then reads +0.5 and stays between +0.1 and +0.9.
+
+The stiffness B belongs to the string, not to the moment, so it is measured as
+the note sounds: the slope of the partials' offsets against k², as the median
+of the slopes between pairs of partials, followed slowly and remembered per
+string. The preset's value is only the starting point; the first clean frame
+replaces it. Frames in which the partials do not lie on a stiff string's line
+(an attack, two notes in one window) teach nothing. The spectrogram lays the
+partials over each other with the same measured stiffness, so the stripe and
+the needle agree; with a fixed value the stripe sat a cent to one side on any
+string that differed from the preset.
+
 ### Keeping it honest
 
 A comb makes *any* input look periodic at the target, so every focused
@@ -277,9 +319,12 @@ What tells them apart is time: a ringing string only fades, the plucked one
 appears. `SpectralHistory` uses that.
 
 - It keeps a short run of recent spectra (half a second). The share of the
-  current spectrum that stands well above their average is the **novelty**;
-  it is near zero for anything steady or fading, noise included, and jumps
-  when a note starts. A jump is a pluck.
+  current spectrum that stands well above anything they held is the
+  **novelty**; it is near zero for anything steady or fading, noise included,
+  and jumps when a note starts. A jump is a pluck. (Above anything, not above
+  their average: two tones a few cents apart beat, and the swell after a quiet
+  moment of the beat is several times the average before it. Taken for a
+  pluck, it blanked the needle and started it over.)
 - At a pluck, the least each bin has held over that run becomes **the
   background**: what was sounding before.
 - From then on both detectors look first at the spectrum with the background
@@ -543,12 +588,20 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
 
 `./gradlew test` needs no device. It runs:
 
-- **67 engine tests** against a plucked-string synthesizer (inharmonic
+- **70 engine tests** against a plucked-string synthesizer (inharmonic
   partials with individual decay, weak fundamental, white noise, mains hum):
   - each guitar string is identified, locked within 0.5 s of the pluck, and
     read to within 0.3 cent;
   - on a stiff string (B = 10⁻⁴) the wide detector reads about 3 cents sharp,
-    the focused detector under 1;
+    the focused detector within 0.05 cent, and it measures the stiffness to
+    within 5 %;
+  - a guitar's high E as a microphone hears it (stiff, every partial a
+    beating pair, the A and low E strings ringing along 8 cents sharp or flat)
+    is read within half a cent on average, the needle moves by less than 1.5
+    cents in three seconds, is never blanked by a beat, and the spectrogram's
+    stripe is within 0.7 cent of it;
+  - a neighbour 15 cents above the fundamental and nearly as loud does not
+    move the reading by more than 0.3 cent;
   - in noise where wide-band detection fails on more than 15 of 20 trials, the
     focused detector is right on at least 19;
   - noise and silence never produce a reading; every other string of the
@@ -611,23 +664,23 @@ been through the engine yet.
 
 ## 8. Limits and next steps
 
-- **The fixes for the first report from a phone are verified in simulation
-  only.** The report was that the high E read sharp and the needle jumped
-  about on a ringing note. In simulation, the 50 ms window then used for the
-  high E does exactly that when other strings ring: a G string at half the
-  E's power pulls it 11 cents sharp, wandering between +6 and +18; a D string
-  pulls it flat; all five together make it wander over 25 cents. With the
-  120 ms window the same cases stay within 1 cent. Whether that was all of
-  what happened on the device has to be confirmed there.
+- **The fixes for the reports from a phone are verified in simulation only.**
+  Two things were reported: the high E read sharp, and the needle wandered on
+  a ringing note. Two causes reproduce in simulation, and both are fixed
+  there: a window too short to keep other ringing strings out (section 4,
+  "Strings that are still ringing"), and low strings ringing along on the
+  partials the reading leaned on most (section 4, "Reading the pitch off the
+  partials"). The simulation of the second was built to match one screenshot.
+  A few seconds of recorded audio from the phone would settle whether it
+  matches the instrument.
 - **A hard pluck really is sharp at first.** A string plucked hard starts
   above its pitch and settles over about a second; the tuner shows that, as it
   should, and the averaged needle runs a little behind it on the way down.
   Tune to where it settles, or pluck gently.
-- **An overtone of another string that sounds next to the note** (a low string
-  20 cents out, set ringing by the pluck) pulls the reading towards it and
-  makes it beat. The needle is steadied against the beating, but the pull
-  itself is real sound and stays: about 4 cents at 12 dB below the note.
-  Damping the other strings removes it.
+- **A string out of tune with itself.** The two planes a string vibrates in
+  differ by a fraction of a hertz, which at a high E's fundamental is a cent
+  or two. The reading sits between them, nearer the stronger one, and moves a
+  little as their balance changes. That is the string, not the tuner.
 - **Two strings equally loud remain ambiguous.** When a ringing string is as
   loud as the one just plucked, and for longer than about 1.5 s after the
   pluck, the tuner may go to the wrong one of two harmonically related

@@ -95,7 +95,7 @@ class FoldedSpectrum(
      * @param out [SPECTRUM_COLUMNS] values in 0..1
      * @return false (and an all-zero [out]) when nothing stands out of the noise
      */
-    fun compute(frame: FloatArray, out: FloatArray): Boolean {
+    fun compute(frame: FloatArray, out: FloatArray, inharmonicity: Double = model.inharmonicity): Boolean {
         analyzer.powerSpectrum(frame, power)
         val binHz = analyzer.binHz
         val count = partialCount(targetHz, model, maxHz)
@@ -103,7 +103,7 @@ class FoldedSpectrum(
         // Each partial's neighbourhood on the cents axis, above its own noise floor.
         var strongest = 0.0
         for (k in 1..count) {
-            val centre = partialFrequency(targetHz, k, model.inharmonicity)
+            val centre = partialFrequency(targetHz, k, inharmonicity)
             val noise = noiseFloor(centre / binHz, 0.5 * targetHz / binHz)
             val slice = slices[k - 1]
             var peak = 0.0
