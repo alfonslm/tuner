@@ -6,7 +6,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
@@ -28,6 +27,7 @@ import io.github.alfonslm.tuner.dsp.SPECTRUM_RANGE_CENTS
 import io.github.alfonslm.tuner.engine.SpectrumRow
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 /** Readings further apart than this (seconds) are separate notes, not one line. */
@@ -45,11 +45,10 @@ private const val GRID_SECONDS = 2.0
  * As a [WaterfallStyle.SPECTROGRAM] each row is the string's spectrum with the
  * noise floor removed (the engine's `FoldedSpectrum`). Colour says where on
  * the scale it is - green in tune, through yellow, to red far off - and
- * brightness says how much energy is there. The background carries the same
- * colours faintly, so the picture reads as "the lit part of the scale": a
- * clean note lights a narrow stripe, a stiff or dying one a wider and fainter
- * one, a second string a second stripe, and silence leaves only the
- * background. The tuner's reading runs through it as a thin white line.
+ * brightness says how much energy is there, on black: a clean note lights a
+ * narrow stripe, a stiff or dying one a wider and fainter one, a second string
+ * a second stripe, and silence is dark. The tuner's reading runs through it as
+ * a thin white line.
  *
  * As a [WaterfallStyle.LINE] it shows only the reading, in the colour the
  * needle had at each moment.
@@ -70,30 +69,25 @@ fun Waterfall(trace: PitchTrace, style: WaterfallStyle, inTuneCents: Float, modi
         fun y(time: Double) = ((trace.now - time) / PitchTrace.SECONDS).toFloat() * size.height
 
         if (spectral) {
-            // The scale's colours, faintly, all the way down.
-            val stops = ZONE_STOPS.flatMap { (cents, _) -> listOf(-cents, cents) }.distinct().sorted()
+            // Black wherever nothing is sounding, so that anything lit stands out.
             drawRect(
-                brush = Brush.horizontalGradient(
-                    colorStops = stops.map { (it + METER_RANGE_CENTS) / (2 * METER_RANGE_CENTS) to zoneColor(it, inTuneCents) }.toTypedArray(),
-                    startX = x(-METER_RANGE_CENTS),
-                    endX = x(METER_RANGE_CENTS),
-                ),
+                color = Color.Black,
                 topLeft = Offset(x(-METER_RANGE_CENTS), 0f),
                 size = Size(x(METER_RANGE_CENTS) - x(-METER_RANGE_CENTS), size.height),
-                alpha = 0.13f,
             )
         } else {
             // Where "in tune" is, all the way down.
             val zoneHalf = inTuneCents / METER_RANGE_CENTS * half
             drawRect(TunerColors.Good.copy(alpha = 0.08f), Offset(centreX - zoneHalf, 0f), Size(2 * zoneHalf, size.height))
         }
-        drawLine(TunerColors.Line, Offset(centreX, 0f), Offset(centreX, size.height), strokeWidth = 1.dp.toPx())
+        val guide = if (spectral) Color.White.copy(alpha = 0.10f) else TunerColors.Line
+        drawLine(guide, Offset(centreX, 0f), Offset(centreX, size.height), strokeWidth = 1.dp.toPx())
 
         // Time lines every two seconds.
         var age = GRID_SECONDS
         while (age < PitchTrace.SECONDS) {
             val lineY = (age / PitchTrace.SECONDS).toFloat() * size.height
-            drawLine(TunerColors.Line.copy(alpha = 0.5f), Offset(x(-METER_RANGE_CENTS), lineY), Offset(x(METER_RANGE_CENTS), lineY), strokeWidth = 1.dp.toPx())
+            drawLine(guide.copy(alpha = guide.alpha * 0.5f), Offset(x(-METER_RANGE_CENTS), lineY), Offset(x(METER_RANGE_CENTS), lineY), strokeWidth = 1.dp.toPx())
             age += GRID_SECONDS
         }
 
@@ -173,22 +167,46 @@ private fun spectrogramImage(rows: List<SpectrumRow>, inTuneCents: Float): Spect
         // Rows sit on a regular time grid; a pause in the stream leaves grid lines empty.
         val line = ((newest.time - row.time) / newest.duration).roundToInt()
         if (line !in 0 until height) continue
-        for (column in 0 until SPECTRUM_COLUMNS) pixels[line * SPECTRUM_COLUMNS + column] = levelColor(row.levels[column], hues[column])
+        val peak = row.levels.max()
+        if (peak <= LEVEL_FLOOR) continue
+        // How loud the row is decides how bright its stripe is; how the energy is spread
+        // within the row decides where the stripe is. The two are shaped separately, so a
+        // quiet note still gives a clear stripe and a loud one does not flood the scale.
+        val loudness = peak.coerceAtMost(1f).pow(LOUDNESS_GAMMA)
+        for (column in 0 until SPECTRUM_COLUMNS) {
+            pixels[line * SPECTRUM_COLUMNS + column] = stripeColor(row.levels[column] / peak, loudness, hues[column])
+        }
     }
     val bitmap = createBitmap(SPECTRUM_COLUMNS, height)
     bitmap.setPixels(pixels, 0, SPECTRUM_COLUMNS, 0, 0, SPECTRUM_COLUMNS, height)
     return Spectrogram(bitmap.asImageBitmap(), newest.time, newest.duration)
 }
 
+/** Rows whose strongest level is below this are left black. */
+private const val LEVEL_FLOOR = 0.03f
+
+/** Below 1: lifts quiet rows, so a note that has faded to a tenth of full level is still drawn at about 40 %. */
+private const val LOUDNESS_GAMMA = 0.4f
+
 /**
- * Energy as light, in the colour of that part of the scale: nothing is
- * transparent (the background shows), more is more solid, and the very top
- * brightens towards white.
+ * Above 1: within a row, darkens everything that is well below the row's peak.
+ * The skirts of a spectral peak are wide and faint; without this they haze over
+ * the scale and the stripe is hard to make out.
  */
-private fun levelColor(level: Float, hue: Int): Int {
-    if (level <= 0.02f) return 0
-    val alpha = (level.coerceAtMost(1f) * 255).roundToInt()
-    val white = ((level - 0.75f) / 0.25f).coerceIn(0f, 1f) * 0.45f
+private const val SHAPE_GAMMA = 2.2f
+
+/**
+ * Energy as light on black, in the colour of that part of the scale.
+ *
+ * @param shape this column's level relative to the strongest in its row, 0..1
+ * @param loudness how bright the row as a whole is, 0..1
+ */
+private fun stripeColor(shape: Float, loudness: Float, hue: Int): Int {
+    val glow = shape.coerceIn(0f, 1f).pow(SHAPE_GAMMA)
+    val alpha = (glow * loudness * 255).roundToInt()
+    if (alpha < 4) return 0
+    // The very centre of the stripe burns through to white.
+    val white = ((glow - 0.7f) / 0.3f).coerceIn(0f, 1f) * 0.55f * loudness
     val r = mix(hue shr 16 and 0xFF, white)
     val g = mix(hue shr 8 and 0xFF, white)
     val b = mix(hue and 0xFF, white)

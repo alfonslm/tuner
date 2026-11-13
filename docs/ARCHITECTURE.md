@@ -80,12 +80,15 @@ web page: browsers only *request* that processing be turned off.
   scale, newest at the top and moving down, in one of two styles chosen in the
   settings.
   - *Spectrogram* (the default): each row is the string's spectrum with the
-    noise floor removed. Colour says where on the scale it is (green in tune,
-    through yellow, to red far off) and brightness says how much energy is
-    there; the background carries the same colours faintly. A clean note
-    lights a narrow stripe, a stiff or dying one a wider and fainter one, a
-    second string a second stripe, and silence leaves only the background. The
-    tuner's reading runs through it as a thin white line.
+    noise floor removed, drawn as light on black. Colour says where on the
+    scale it is (green in tune, through yellow, to red far off) and brightness
+    says how much energy is there. A clean note lights a narrow stripe, a
+    stiff or dying one a wider and fainter one, a second string a second
+    stripe, and silence is black. The tuner's reading runs through it as a
+    thin white line. For contrast, brightness is shaped in two parts: within a
+    row, anything well below the row's peak is darkened, so the wide faint
+    skirts of a spectral peak do not haze over the scale; and quiet rows are
+    lifted, so a note that has faded to a tenth of full level still shows.
   - *Line*: only the reading, in the colour the needle had at each moment.
 
   Either way, something running straight down is a steady pitch and something
