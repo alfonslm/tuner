@@ -85,9 +85,10 @@ data class LockConfig(
 )
 
 data class DisplayConfig(
-    val medianFrames: Int = 5,
-    /** 0..1 exponential smoothing factor applied after the median. */
-    val smoothing: Double = 0.35,
+    /** Frames in the median that drops a single stray reading. */
+    val medianFrames: Int = 3,
+    /** 0..1 weight of the newest value in the exponential average applied after the median. */
+    val smoothing: Double = 0.5,
     /** A gap longer than this restarts smoothing. */
     val resetGapMs: Double = 300.0,
     val inTuneCents: Double = 3.0,

@@ -37,8 +37,15 @@ class SpectrumRow(
 
 /** One analysis result. The engine produces exactly one per audio block. */
 data class TunerReading(
-    /** Stream time in seconds. */
+    /** Stream time in seconds at which the reading was produced. */
     val time: Double,
+    /**
+     * How long ago, in seconds, the audio behind [cents] was sounding: a
+     * reading describes the middle of its analysis window, and smoothing adds a
+     * little more. Subtract it from [time] to place the reading on the same
+     * time axis as the spectrogram rows. Zero when not [voiced].
+     */
+    val delay: Double,
     /**
      * The instrument whose strings are the current targets. Equal to the
      * configured one, except in automatic mode: there it is the automatic preset

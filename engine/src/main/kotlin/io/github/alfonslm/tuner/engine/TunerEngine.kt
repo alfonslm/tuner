@@ -74,7 +74,14 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         var handoffFrames = 0
     }
 
-    private class Pitch(val frequency: Double, val target: Target, val source: PitchSource, val confidence: Double)
+    private class Pitch(
+        val frequency: Double,
+        val target: Target,
+        val source: PitchSource,
+        val confidence: Double,
+        /** Samples in the analysis window the estimate came from. */
+        val window: Int,
+    )
 
     private val pool = AnalyzerPool()
     private val detectors = HashMap<String, FocusedDetector>()
@@ -157,7 +164,7 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         if (lock != null) pitch = trackLocked(time, audible, wide, settled)
         if (lock == null) {
             if (wide != null && wideTarget != null) {
-                pitch = Pitch(wide.frequency, wideTarget, PitchSource.WIDE, wide.clarity)
+                pitch = Pitch(wide.frequency, wideTarget, PitchSource.WIDE, wide.clarity, wideFrame.size)
             }
             if (config.smartFilter == SmartFilterMode.AUTO && settled != null) {
                 engage(settled.target, settled.cents, pinned = false, time)
@@ -247,20 +254,20 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
             if (!elsewhere || wideAgrees) {
                 lock.lastHeard = time
                 val target = followTarget(focus.frequency, time)
-                return Pitch(focus.frequency, target, PitchSource.FOCUSED, focus.salience)
+                return Pitch(focus.frequency, target, PitchSource.FOCUSED, focus.salience, lock.frame.size)
             }
         }
 
         if (elsewhere && settled != null && wide != null) {
             // A different note is clearly and steadily sounding: move the filter to it.
             engage(settled.target, settled.cents, pinned = false, time)
-            return Pitch(wide.frequency, settled.target, PitchSource.WIDE, wide.clarity)
+            return Pitch(wide.frequency, settled.target, PitchSource.WIDE, wide.clarity, wideFrame.size)
         }
 
         if (wide != null && abs(centsBetween(wide.frequency, lock.target.frequency)) <= lock.captureCents) {
             // The comb lost the string (e.g. it was re-tuned in a jump) but it is still in range.
             lock.lastHeard = time
-            return Pitch(wide.frequency, lock.target, PitchSource.WIDE, wide.clarity)
+            return Pitch(wide.frequency, lock.target, PitchSource.WIDE, wide.clarity, wideFrame.size)
         }
 
         if (!lock.pinned && (time - lock.lastHeard) * 1000 > config.lock.holdMs) this.lock = null
@@ -402,6 +409,7 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         val lock = lock
         return TunerReading(
             time = time,
+            delay = if (pitch == null) 0.0 else (pitch.window / 2.0 + smoother.delayFrames * blockSize) / sampleRate,
             instrumentId = preset.id,
             mode = if (lock != null) TunerMode.LOCKED else TunerMode.SEARCH,
             levelDb = levelDb,

@@ -89,6 +89,31 @@ class EngineTest {
         assertTrue(!far.inTune)
     }
 
+    @Test
+    fun `a reading says how old its audio is, and dated that way it follows a moving pitch`() {
+        // An A string tuned up from -30 to 0 cents between t = 1 s and t = 2 s, steady before and after.
+        fun truth(t: Double) = -30 + 30 * (t - 1).coerceIn(0.0, 1.0)
+        val signal = FloatArray(3 * SAMPLE_RATE)
+        var phase = 0.0
+        for (i in signal.indices) {
+            phase += 2 * PI * detune(A2, truth(i.toDouble() / SAMPLE_RATE)) / SAMPLE_RATE
+            signal[i] = (0.2 * (sin(phase) + 0.5 * sin(2 * phase) + 0.3 * sin(3 * phase) + 0.2 * sin(5 * phase))).toFloat()
+        }
+        val readings = run(engine(), signal)
+        val moving = readings.between(1.3, 1.9)
+        assertTrue(moving.all { it.source == PitchSource.FOCUSED })
+
+        // The needle trails a steadily moving pitch by a little over a tenth of a second...
+        assertTrue(moving.all { it.delay in 0.09..0.13 }, "delays ${moving.map { it.delay }.distinct()}")
+        assertTrue(moving.all { truth(it.time) - it.cents!! in 2.0..4.5 }, "lag ${moving.map { truth(it.time) - it.cents!! }}")
+        // ...and the reading is right for the moment it describes.
+        assertTrue(moving.all { abs(truth(it.time - it.delay) - it.cents!!) < 0.7 }, "${moving.map { truth(it.time - it.delay) - it.cents!! }}")
+
+        // It has caught up within a quarter of a second of the pitch coming to rest.
+        assertTrue(readings.between(2.25, 3.0).all { abs(it.cents!!) < 0.5 })
+        assertTrue(readings.filter { !it.voiced }.all { it.delay == 0.0 })
+    }
+
     // --- switching strings ---
 
     @Test

@@ -258,8 +258,10 @@ analysis with two moves:
 - **Fold the partials.** Every partial carries the same pitch information, and
   partial k is k times sharper on a cents scale, because the window's
   resolution is fixed in Hz while a cent at partial k is k times as many Hz.
-  The neighbourhoods of all partials are mapped onto one cents axis and added,
-  the sharper ones counting for more (weight k²).
+  The neighbourhoods of all partials are mapped onto one cents axis and added.
+  A partial counts for more the sharper it is (k²) and the stronger it is (its
+  amplitude relative to the strongest), so the picture follows the frequencies
+  that carry the sound and a faint overtone cannot pull it aside.
 - **Use a long window.** 48 periods of the target (capped at 0.6 s) instead of
   the detectors' 16. A history display can afford the delay: each row is dated
   at the middle of its window, about a quarter of a second back, which is a
@@ -268,11 +270,9 @@ analysis with two moves:
 The **noise floor is removed per partial**: the floor is the median power in
 that partial's own neighbourhood, and only power above three times that
 counts, so hum and rumble near one partial do not lift the floor anywhere
-else. A partial is drawn only once its peak stands 10 dB clear. Each partial's
-slice is scaled to its own peak before adding (the picture is about where the
-energy is, not which partial is loudest), and the row as a whole is scaled by
-how far the strongest partial is above the noise, so a note that fades away
-fades from the display.
+else. A partial is drawn only once its peak stands 10 dB clear. The row as a
+whole is scaled by how far the strongest partial is above the noise, so a note
+that fades away fades from the display.
 
 With all eight partials present the stripe is about 9 cents wide. It is wider
 when the sound gives less to go on: only low partials left, overtones that
@@ -284,6 +284,22 @@ and the reading deliberately is not.
 
 A row is produced every third block (about 16 per second) and travels in
 `TunerReading.spectrum`.
+
+### One time axis
+
+Results come out later than the sound they describe, and by different
+amounts. A reading describes the middle of its analysis window and is then
+smoothed (a median of three frames and an exponential average, kept short so
+the needle follows the peg): about 0.11 s in all for a guitar's A string. A
+spectrogram row describes the middle of a much longer window: about 0.25 s.
+
+Drawn at the time they were produced, the reading would run beside the stripe
+whenever the pitch moves, not through it. So both carry the time of their
+audio: a row in `SpectrumRow.time`, a reading as `TunerReading.delay` behind
+`time`. The waterfall places everything at audio time, and its top edge is the
+moment the newest reading describes, which is what the needle is showing. The
+spectrogram therefore starts a little below the top; it needs more sound
+before it can say anything.
 
 ## 5. Automatic switching
 
@@ -402,6 +418,7 @@ ones that shape behaviour:
 | `focus.periods` / `maxFrameMs` | 16 / 150 | focused analysis window |
 | `focus.minSalience` / `minExplained` / `minFundamentalSupport` | 0.5 / 0.8 / 0.06 | validation thresholds |
 | `wide.minClarity` | 0.85 | periodicity needed for a wide-band reading |
+| `display.medianFrames` / `smoothing` | 3 / 0.5 | how hard the reading is smoothed; lower `smoothing` is steadier and slower |
 | `display.inTuneCents` / `inTuneHoldMs` | 3 / 400 | when the display turns green |
 
 The standard tunings live in `music/Instruments.kt` (string notes + harmonic
@@ -412,7 +429,7 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
 
 `./gradlew test` needs no device. It runs:
 
-- **55 engine tests** against a plucked-string synthesizer (inharmonic
+- **56 engine tests** against a plucked-string synthesizer (inharmonic
   partials with individual decay, weak fundamental, white noise, mains hum):
   - each guitar string is identified, locked within 0.5 s of the pluck, and
     read to within 0.3 cent;
@@ -424,6 +441,9 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
     instrument is rejected even with the comb fully open;
   - E2 ↔ E4, string changes, chromatic hand-off through a semitone, hold and
     release, and pinning behave as described above;
+  - a pitch moving at 30 cents a second is trailed by the needle by 2 to 4.5
+    cents (about 0.11 s), and every reading is within 0.7 cent of the truth at
+    the moment it says it describes;
   - the spectrogram: a string shows as a stripe at most 11 cents wide within
     1 cent of where it is, on every string; noise, silence and mains hum leave
     the row empty; two strings 30 cents apart show as two stripes;
@@ -434,7 +454,7 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
     it chooses only among the tunings in use, tells standard from Drop D by
     the low string, reaches down to the B0 of a 5-string bass when that is in
     use, and recognises a custom tuning.
-- **23 app tests**.
+- **24 app tests**.
   - Nine drive the real pipeline (view model → flow → engine) with a synthetic
     microphone: a tone gets locked and shown, its spectrogram rows arrive
     without a gap, stopping closes the stream, a microphone that fails to open
@@ -446,7 +466,8 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
   - Eight cover the tuning list: switching, duplicating, editing within
     limits, standard tunings being read-only, and saving and restoring
     (including damaged saved data).
-  - Six cover the waterfall's history.
+  - Seven cover the waterfall's history, including that readings and rows
+    are placed at the time of their audio.
 
 `./gradlew :app:validateDebugScreenshotTest` renders the Compose screen on
 the JVM in fifteen states (the tuner idle, searching, locked sharp, in tune,
@@ -473,6 +494,12 @@ been through the engine yet.
   to low E, another instrument playing) biases any estimator. The validation
   rejects such frames rather than show a wrong value, so the needle may drop
   out instead.
+- **Plucking shows as a spike in the reading.** For the few frames in which
+  the analysis window holds both the old note and the new attack, the estimate
+  jumps, and with the faster smoothing the needle shows it. On the synthesized
+  test string that is a brief excursion of 10 to 20 cents at each pluck. Real
+  attacks will differ; if it is distracting on a device, the usual remedy is
+  to hold the reading for a few frames after a jump in level.
 - **The spectrogram costs an extra FFT** of up to 32768 points sixteen times a
   second. That is about 1 ms each on a desktop JVM; whether a slow phone keeps
   up is one of the things to measure on a device. `spectrogram.everyBlocks`

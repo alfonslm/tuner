@@ -8,6 +8,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 /** Columns of a spectrogram row: one per cent from -[SPECTRUM_RANGE_CENTS] to +[SPECTRUM_RANGE_CENTS]. */
 const val SPECTRUM_COLUMNS = 101
@@ -44,8 +45,8 @@ data class FoldedSpectrumOptions(
  *  - Every partial carries the same pitch information, and partial k is k times
  *    sharper on a cents scale (the window's resolution is fixed in Hz, a cent
  *    at partial k is k times as many Hz). So the neighbourhoods of all partials
- *    are mapped onto one cents axis and added, the sharper ones counting for
- *    more (weight k²).
+ *    are mapped onto one cents axis and added, a partial counting for more
+ *    the sharper it is (k²) and the stronger it is (its amplitude).
  *  - The row is computed from a much longer window than the detectors use
  *    ([FoldedSpectrumOptions.periods]). A history display can afford that: a
  *    quarter of a second of delay is a few pixels of the waterfall.
@@ -70,7 +71,9 @@ class FoldedSpectrum(
 ) {
     private val analyzer: SpectralAnalyzer
     private val power: DoubleArray
-    private val slice = DoubleArray(SPECTRUM_COLUMNS)
+    private val slices = Array(model.partials) { DoubleArray(SPECTRUM_COLUMNS) }
+    private val peaks = DoubleArray(model.partials)
+    private val snrDb = DoubleArray(model.partials)
     private val row = DoubleArray(SPECTRUM_COLUMNS)
     private val ratios = DoubleArray(SPECTRUM_COLUMNS) {
         2.0.pow((it - (SPECTRUM_COLUMNS - 1) / 2) * (2 * SPECTRUM_RANGE_CENTS / (SPECTRUM_COLUMNS - 1)) / 1200)
@@ -95,28 +98,41 @@ class FoldedSpectrum(
     fun compute(frame: FloatArray, out: FloatArray): Boolean {
         analyzer.powerSpectrum(frame, power)
         val binHz = analyzer.binHz
+        val count = partialCount(targetHz, model, maxHz)
+
+        // Each partial's neighbourhood on the cents axis, above its own noise floor.
+        var strongest = 0.0
+        for (k in 1..count) {
+            val centre = partialFrequency(targetHz, k, model.inharmonicity)
+            val noise = noiseFloor(centre / binHz, 0.5 * targetHz / binHz)
+            val slice = slices[k - 1]
+            var peak = 0.0
+            if (noise > 0) {
+                for (column in 0 until SPECTRUM_COLUMNS) {
+                    val value = max(0.0, powerAt(centre * ratios[column] / binHz) - options.floorFactor * noise)
+                    slice[column] = value
+                    if (value > peak) peak = value
+                }
+            }
+            peaks[k - 1] = peak
+            snrDb[k - 1] = if (noise > 0 && peak > 0) 10 * log10(peak / noise) else 0.0
+            if (snrDb[k - 1] >= options.minSnrDb && peak > strongest) strongest = peak
+        }
+
+        // Laid over each other. A partial counts for more the sharper it is (k²) and the
+        // stronger it is (its amplitude relative to the strongest), so the picture follows
+        // the frequencies that carry the sound and a faint overtone cannot pull it aside.
         row.fill(0.0)
         var totalWeight = 0.0
         var strongestDb = 0.0
-
-        for (k in 1..partialCount(targetHz, model, maxHz)) {
-            val centre = partialFrequency(targetHz, k, model.inharmonicity)
-            val noise = noiseFloor(centre / binHz, 0.5 * targetHz / binHz)
-            if (!(noise > 0)) continue
-
-            var peak = 0.0
-            for (column in 0 until SPECTRUM_COLUMNS) {
-                val value = max(0.0, powerAt(centre * ratios[column] / binHz) - options.floorFactor * noise)
-                slice[column] = value
-                if (value > peak) peak = value
-            }
-            val snrDb = 10 * log10(peak / noise)
-            if (!(snrDb >= options.minSnrDb)) continue
-
-            val weight = k * k * min(1.0, (snrDb - options.minSnrDb) / options.fadeInDb)
+        for (k in 1..count) {
+            if (snrDb[k - 1] < options.minSnrDb) continue
+            val peak = peaks[k - 1]
+            val weight = k * k * sqrt(peak / strongest) * min(1.0, (snrDb[k - 1] - options.minSnrDb) / options.fadeInDb)
+            val slice = slices[k - 1]
             for (column in 0 until SPECTRUM_COLUMNS) row[column] += weight * slice[column] / peak
             totalWeight += weight
-            strongestDb = max(strongestDb, snrDb)
+            strongestDb = max(strongestDb, snrDb[k - 1])
         }
 
         if (!(totalWeight > 0)) {

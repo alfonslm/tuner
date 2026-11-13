@@ -5,9 +5,10 @@ import kotlin.math.abs
 class SmoothedReading(val cents: Double, val inTune: Boolean)
 
 /**
- * Turns per-frame cent offsets into a steady needle: a short median removes
- * single-frame outliers (pluck transients), an exponential average removes
- * jitter. Smoothing restarts when the target changes or after a pause.
+ * Turns per-frame cent offsets into a steady needle: a median of three removes
+ * a single stray frame, an exponential average removes jitter. Both are kept
+ * short so the needle follows the peg closely. Smoothing restarts when the
+ * target changes or after a pause.
  */
 class ReadingSmoother(private val options: DisplayConfig) {
     private val recent = ArrayDeque<Double>()
@@ -15,6 +16,9 @@ class ReadingSmoother(private val options: DisplayConfig) {
     private var targetId: String? = null
     private var lastTime = Double.NEGATIVE_INFINITY
     private var inTuneSince: Double? = null
+
+    /** How far the smoothed value trails its input while that is changing steadily, in frames. */
+    val delayFrames: Double = (options.medianFrames - 1) / 2.0 + (1 - options.smoothing) / options.smoothing
 
     fun reset() {
         recent.clear()

@@ -21,8 +21,10 @@ class PitchTraceTest {
         cents: Double? = 0.0,
         inTune: Boolean = false,
         spectrum: SpectrumRow? = null,
+        delay: Double = 0.0,
     ) = TunerReading(
         time = time,
+        delay = if (cents != null) delay else 0.0,
         instrumentId = "guitar",
         mode = TunerMode.LOCKED,
         levelDb = -30.0,
@@ -45,6 +47,22 @@ class PitchTraceTest {
         assertEquals(listOf(-20f, -12f, 1.5f), trace.points.map { it.cents })
         assertEquals(listOf(false, false, true), trace.points.map { it.inTune })
         assertEquals(1.04, trace.now)
+    }
+
+    @Test
+    fun `readings are placed at the moment they describe, which is also the top edge`() {
+        val trace = PitchTrace().add(reading(1.00, cents = -20.0, delay = 0.115)).add(reading(1.02, cents = -19.0, delay = 0.115))
+        assertEquals(listOf(0.885, 0.905), trace.points.map { it.time }.map { Math.round(it * 1000) / 1000.0 })
+        assertEquals(0.905, trace.now, 1e-9)
+
+        // When the note stops, the edge keeps moving at the same distance behind the clock instead of jumping.
+        val silent = trace.add(reading(1.04, cents = null))
+        assertEquals(0.925, silent.now, 1e-9)
+        assertEquals(2, silent.points.size)
+
+        // A row computed from a longer window lies further back, below the newest reading.
+        val row = SpectrumRow(0.70, 0.064, a2.id, FloatArray(101))
+        assertTrue(silent.add(reading(1.06, cents = -18.0, delay = 0.115, spectrum = row)).let { it.rows.single().time < it.points.last().time })
     }
 
     @Test

@@ -50,6 +50,7 @@ private fun reading(
     instrumentId: String = "guitar",
 ) = TunerReading(
     time = 10.0,
+    delay = if (cents != null) 0.115 else 0.0,
     instrumentId = instrumentId,
     mode = if (locked) TunerMode.LOCKED else TunerMode.SEARCH,
     levelDb = -30.0,
