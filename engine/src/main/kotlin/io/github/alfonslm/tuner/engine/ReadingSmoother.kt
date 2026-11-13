@@ -5,7 +5,14 @@ import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.sqrt
 
-class SmoothedReading(val cents: Double, val spreadCents: Double?, val inTune: Boolean)
+class SmoothedReading(
+    val cents: Double,
+    val spreadCents: Double?,
+    /** The scatter on the flat and on the sharp side of the reading; see `TunerReading`. */
+    val spreadFlatCents: Double?,
+    val spreadSharpCents: Double?,
+    val inTune: Boolean,
+)
 
 /**
  * Turns per-frame cent offsets into a needle that holds still on a ringing
@@ -40,6 +47,8 @@ class ReadingSmoother(private val options: DisplayConfig, frameSeconds: Double) 
     private var inTuneSince: Double? = null
     private var offMean = 0.0
     private var offSquare = 0.0
+    private var flatSquare = 0.0
+    private var sharpSquare = 0.0
 
     /** How much of the way towards a new estimate the needle moves each frame. */
     private val weight = if (options.smoothingMs > 0) 1 - exp(-frameSeconds * 1000 / options.smoothingMs) else 1.0
@@ -62,6 +71,8 @@ class ReadingSmoother(private val options: DisplayConfig, frameSeconds: Double) 
         inTuneSince = null
         offMean = 0.0
         offSquare = 0.0
+        flatSquare = 0.0
+        sharpSquare = 0.0
     }
 
     fun push(targetId: String, cents: Double, time: Double): SmoothedReading {
@@ -79,6 +90,7 @@ class ReadingSmoother(private val options: DisplayConfig, frameSeconds: Double) 
 
         count++
         // Scatter: of the estimate itself, not of the median, which exists to hide strays.
+        val known = count > MIN_SPREAD_READINGS
         val spread = value?.let { needle ->
             val off = cents - needle
             val stray = off - offMean
@@ -87,7 +99,12 @@ class ReadingSmoother(private val options: DisplayConfig, frameSeconds: Double) 
             // frame or two, and it takes the full measuring time of agreement to forget it.
             val weight = if (stray * stray > offSquare) GROW_WEIGHT else spreadWeight
             offSquare += max(weight, 1.0 / (count - 1)) * (stray * stray - offSquare)
-            if (count > MIN_SPREAD_READINGS) sqrt(offSquare) else null
+            // The same, kept apart for estimates below and above the others.
+            val flat = if (stray < 0) stray * stray else 0.0
+            val sharp = if (stray > 0) stray * stray else 0.0
+            flatSquare += max(if (flat > flatSquare) GROW_WEIGHT else spreadWeight, 1.0 / (count - 1)) * (flat - flatSquare)
+            sharpSquare += max(if (sharp > sharpSquare) GROW_WEIGHT else spreadWeight, 1.0 / (count - 1)) * (sharp - sharpSquare)
+            if (known) sqrt(offSquare) else null
         }
         val smoothed = value?.let { it + max(weight, 1.0 / count) * (median - it) } ?: median
         value = smoothed
@@ -98,7 +115,11 @@ class ReadingSmoother(private val options: DisplayConfig, frameSeconds: Double) 
             inTuneSince = null
         }
         val since = inTuneSince
-        return SmoothedReading(smoothed, spread, since != null && (time - since) * 1000 >= options.inTuneHoldMs)
+        // Each side sees half the estimates of an even scatter, hence the 2: evenly scattered
+        // estimates give the same figure on both sides as overall.
+        val flatSpread = if (spread != null) sqrt(2 * flatSquare) else null
+        val sharpSpread = if (spread != null) sqrt(2 * sharpSquare) else null
+        return SmoothedReading(smoothed, spread, flatSpread, sharpSpread, since != null && (time - since) * 1000 >= options.inTuneHoldMs)
     }
 
     private companion object {

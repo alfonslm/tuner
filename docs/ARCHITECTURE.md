@@ -485,7 +485,11 @@ half a second first. Two things are therefore reported with every reading,
 both taken from the last frame or two:
 
 - **the scatter** above, which rises to an estimate that lies further out
-  than it within two frames and falls back over 400 ms;
+  than it within two frames and falls back over 400 ms. It is also kept
+  apart for the estimates that fall below the others and those that fall
+  above (`spreadFlatCents`, `spreadSharpCents`; equal to each other and to
+  the overall figure when the scatter is even), because what disturbs a note
+  usually pulls one way: something sounding just above it, say;
 - **`confidence`**: how much of everything that is sounding is the note being
   read (`stringShare`: the energy on the string's partials as a share of all
   the energy from 60 Hz up to its last partial, less what would lie there by
@@ -498,8 +502,11 @@ both taken from the last frame or two:
 The meter turns the worse of the two into how the needle looks (`unclarity`:
 clear up to 1 cent of scatter and down to 92 % share, fully unclear from 6
 cents or 55 %). The needle is three soft things laid over each other. A glow,
-fading from its middle towards all its edges, is as wide as the scatter (and
-at least a few cents wide when the note has company). A bulge in it, four
+fading from its middle towards all its edges, is as wide as the scatter, to
+each side by as much as the estimates stray to that side, and brighter on the
+side with more of it: scatter that is all sharp gives a glow that leans sharp.
+(Company widens it to at least a few cents on both sides alike; that says the
+reading is doubtful, not which way.) A bulge in it, four
 times narrower, is where the reading is. A line through the middle is only as
 crisp as the note is clear. The less clear, the fainter the line and the
 shorter the peak, which then runs out into the low, wide glow. One clean note
@@ -669,7 +676,7 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
 
 `./gradlew test` needs no device. It runs:
 
-- **74 engine tests** against a plucked-string synthesizer (inharmonic
+- **75 engine tests** against a plucked-string synthesizer (inharmonic
   partials with individual decay, weak fundamental, white noise, mains hum):
   - each guitar string is identified, locked within 0.5 s of the pluck, and
     read to within 0.3 cent;

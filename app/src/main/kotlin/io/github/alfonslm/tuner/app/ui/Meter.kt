@@ -40,7 +40,7 @@ private val MIN_HALF_WIDTH = 5.dp
 private const val GLOW_TALLNESS = 0.6f
 
 /** How opaque the glow is at its middle... */
-private const val GLOW_OPACITY = 0.3f
+private const val GLOW_OPACITY = 0.36f
 
 /** ...and the bulge laid over it. */
 private const val BULGE_OPACITY = 0.6f
@@ -185,7 +185,9 @@ val METER_INSET = 2.dp
  *
  * The needle is three soft things laid over each other. A glow, fading from
  * its middle towards all its edges, is as wide as the estimates behind the
- * reading scatter (their standard deviation is its sigma). A bulge in it,
+ * reading scatter (their standard deviation is its sigma), to each side by as
+ * much as they stray to that side: scatter that is all sharp gives a glow that
+ * leans sharp. A bulge in it,
  * several times narrower, is where their average, the reading, is. A line
  * through the middle is only as crisp as the note is clear ([unclarity],
  * [needleOpacity]): solid for one clean note, fading as the estimates scatter
@@ -201,6 +203,8 @@ val METER_INSET = 2.dp
  * @param confidence the share of what is sounding that is the note being read, if known
  * @param dimmed true for a held reading (the note has stopped)
  * @param window what the scale shows, see [scaleWindow]
+ * @param spreadFlatCents the scatter of the estimates that fall below the reading...
+ * @param spreadSharpCents ...and of those that fall above it; the glow reaches as far to each side
  */
 @Composable
 fun Meter(
@@ -212,6 +216,8 @@ fun Meter(
     dimmed: Boolean,
     modifier: Modifier = Modifier,
     window: ScaleWindow = ScaleWindow(),
+    spreadFlatCents: Float? = spreadCents,
+    spreadSharpCents: Float? = spreadCents,
 ) {
     val centre = window.centre
     val range = window.range
@@ -237,10 +243,18 @@ fun Meter(
         animationSpec = tween(durationMillis = if (worse) 50 else 300),
         label = "unclear",
     )
-    val sigma by animateFloatAsState(
-        targetValue = if (cents == null) 0f else max(spreadCents ?: UNKNOWN_SPREAD_CENTS, unclearNow * UNCLEAR_SPREAD_CENTS),
+    // The glow reaches as far to each side as the estimates stray to that side. What makes a
+    // reading unclear without saying where (company) widens both sides alike.
+    val least = unclearNow * UNCLEAR_SPREAD_CENTS
+    val sigmaFlat by animateFloatAsState(
+        targetValue = if (cents == null) 0f else max(spreadFlatCents ?: UNKNOWN_SPREAD_CENTS, least),
         animationSpec = tween(durationMillis = if (worse) 50 else 300),
-        label = "sigma",
+        label = "sigmaFlat",
+    )
+    val sigmaSharp by animateFloatAsState(
+        targetValue = if (cents == null) 0f else max(spreadSharpCents ?: UNKNOWN_SPREAD_CENTS, least),
+        animationSpec = tween(durationMillis = if (worse) 50 else 300),
+        label = "sigmaSharp",
     )
     val tallness = headTallness(unclear)
     val needleAlpha = needleOpacity(unclear, held = false)
@@ -310,8 +324,9 @@ fun Meter(
             // low. So a clear note is a tall sharp needle, and a weak or broken-up one a short
             // soft peak that runs out into a wide low glow.
             val centreHead = Offset(x(position), centreY)
-            val glowWide = max(SPOT_REACH * sigma / range * half, MIN_HALF_WIDTH.toPx())
-            val bulgeWide = max(glowWide / BULGE_SHARPNESS, MIN_HALF_WIDTH.toPx())
+            val glowFlat = max(SPOT_REACH * sigmaFlat / range * half, MIN_HALF_WIDTH.toPx())
+            val glowSharp = max(SPOT_REACH * sigmaSharp / range * half, MIN_HALF_WIDTH.toPx())
+            val bulgeWide = max((glowFlat + glowSharp) / 2 / BULGE_SHARPNESS, MIN_HALF_WIDTH.toPx())
             // The clearer the note, the taller the peak; the glow under it stays low, so a weak
             // signal's short peak runs out into it.
             val peakTall = centreY * tallness
@@ -326,10 +341,15 @@ fun Meter(
                     drawCircle(Brush.radialGradient(*stops, center = centreHead, radius = tall), radius = tall, center = centreHead)
                 }
             }
-            clipRect(left = x(-1f), right = x(1f)) {
-                spot(glowWide, glowTall, GLOW_OPACITY, steepness = 2f)
-                spot(bulgeWide, peakTall, BULGE_OPACITY, steepness = 4f)
-            }
+            // The glow in two halves, each as wide as the estimates stray to its side: scatter that
+            // is all sharp gives a glow that leans sharp.
+            // The side with more of the scatter is also the brighter one.
+            val flatShare = sigmaFlat * sigmaFlat / (sigmaFlat * sigmaFlat + sigmaSharp * sigmaSharp).coerceAtLeast(1e-6f)
+            val flatGlow = GLOW_OPACITY * (0.5f + flatShare)
+            val sharpGlow = GLOW_OPACITY * (1.5f - flatShare)
+            clipRect(left = x(-1f), right = centreHead.x) { spot(glowFlat, glowTall, flatGlow, steepness = 2f) }
+            clipRect(left = centreHead.x, right = x(1f)) { spot(glowSharp, glowTall, sharpGlow, steepness = 2f) }
+            clipRect(left = x(-1f), right = x(1f)) { spot(bulgeWide, peakTall, BULGE_OPACITY, steepness = 4f) }
             val lineHalf = peakTall - LINE_WIDTH.toPx() / 2
             drawLine(
                 color = tone.copy(alpha = needleAlpha * headDim),

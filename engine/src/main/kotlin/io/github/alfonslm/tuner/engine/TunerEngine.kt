@@ -156,7 +156,7 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         samples += block.size
         val time = samples.toDouble() / sampleRate
 
-        if (!ring.copyLatest(wideFrame)) return reading(time, -120.0, null, null, null, false)
+        if (!ring.copyLatest(wideFrame)) return reading(time, -120.0, null, null, false)
 
         // 1. Wide-band analysis: acquisition while searching, watchdog while locked.
         val rms = wideAnalyzer.powerSpectrum(wideFrame, widePower)
@@ -201,10 +201,10 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         readBlocks[(blocksSeen % readBlocks.size).toInt()] = pitch != null
         val row = spectrumRow(time, audible, pitch?.target ?: lock?.target)
         val result = if (pitch == null) {
-            reading(time, levelDb, null, null, null, false, row)
+            reading(time, levelDb, null, null, false, row)
         } else {
             val smoothed = smoother.push(pitch.target.id, centsBetween(pitch.frequency, pitch.target.frequency), time)
-            reading(time, levelDb, pitch, smoothed.cents, smoothed.spreadCents, smoothed.inTune, row)
+            reading(time, levelDb, pitch, smoothed, smoothed.inTune, row)
         }
 
         // 5. Automatic mode: every settled note is a clue to which instrument this is.
@@ -531,12 +531,12 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         time: Double,
         levelDb: Double,
         pitch: Pitch?,
-        cents: Double?,
-        spreadCents: Double?,
+        smoothed: SmoothedReading?,
         inTune: Boolean,
         spectrum: SpectrumRow? = null,
     ): TunerReading {
         val lock = lock
+        val cents = smoothed?.cents
         return TunerReading(
             time = time,
             delay = if (pitch == null) 0.0 else pitch.window / 2.0 / sampleRate + smoother.delay,
@@ -547,7 +547,9 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
             target = pitch?.target ?: lock?.target,
             frequency = if (pitch != null && cents != null) pitch.target.frequency * centsToRatio(cents) else null,
             cents = cents,
-            spreadCents = spreadCents,
+            spreadCents = smoothed?.spreadCents,
+            spreadFlatCents = smoothed?.spreadFlatCents,
+            spreadSharpCents = smoothed?.spreadSharpCents,
             confidence = pitch?.confidence ?: 0.0,
             inTune = inTune,
             lock = lock?.let { LockInfo(it.target, it.pinned, it.widthCents) },

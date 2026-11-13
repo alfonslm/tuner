@@ -75,6 +75,14 @@ data class TunerReading(
      */
     val spreadCents: Double? = null,
     /**
+     * The same scatter, kept apart for the estimates that fall below the others
+     * and those that fall above: equal to each other (and to [spreadCents]) when
+     * they scatter evenly, and lopsided when what disturbs the note pulls one
+     * way, such as something sounding just above it.
+     */
+    val spreadFlatCents: Double? = null,
+    val spreadSharpCents: Double? = null,
+    /**
      * 0..1: how much of what is sounding is the note being read, in this frame
      * alone. Near 1 for one string on its own; lower at once when something
      * else sounds with it, whether other strings ringing on or another

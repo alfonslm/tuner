@@ -1,6 +1,9 @@
 package io.github.alfonslm.tuner
 
+import io.github.alfonslm.tuner.engine.DisplayConfig
 import io.github.alfonslm.tuner.engine.PitchSource
+import io.github.alfonslm.tuner.engine.ReadingSmoother
+import io.github.alfonslm.tuner.engine.SmoothedReading
 import io.github.alfonslm.tuner.engine.SmartFilterMode
 import io.github.alfonslm.tuner.engine.TunerConfig
 import io.github.alfonslm.tuner.engine.TunerEngine
@@ -216,6 +219,34 @@ class EngineTest {
         // As loud as the string: whichever of the two is shown, it is half of what is sounding.
         val loud = readings(0.2).between(1.6, 3.5).filter { it.voiced }
         assertTrue(loud.isNotEmpty() && loud.all { it.confidence < 0.7 }, "loud: " + loud.filterIndexed { i, _ -> i % 6 == 0 }.take(14).map { "%.2f %s %s %.2f".format(it.time, it.source, it.target!!.label, it.confidence) })
+    }
+
+    @Test
+    fun `says to which side the estimates stray`() {
+        fun smoother() = ReadingSmoother(DisplayConfig(), 1024.0 / SAMPLE_RATE)
+        fun last(values: List<Double>): SmoothedReading {
+            val smoother = smoother()
+            return values.mapIndexed { i, cents -> smoother.push("string", cents, i * 1024.0 / SAMPLE_RATE) }.last()
+        }
+        val random = java.util.Random(3)
+
+        // Evenly scattered: the same figure on both sides as overall.
+        val even = last(List(400) { 2.0 * random.nextGaussian() })
+        assertTrue(abs(even.spreadFlatCents!! - even.spreadSharpCents!!) < 0.5 * even.spreadCents!!, "even: ${even.spreadFlatCents} / ${even.spreadSharpCents}")
+        assertTrue(abs(even.spreadSharpCents!! - even.spreadCents!!) < 0.5 * even.spreadCents!!)
+
+        // Steady, with every sixth estimate pulled 8 cents sharp: it is the sharp side that scatters.
+        val pulled = last(List(400) { i -> 0.1 * random.nextGaussian() + if (i % 6 == 5) 8.0 else 0.0 })
+        assertTrue(pulled.spreadSharpCents!! > 3 * pulled.spreadFlatCents!!, "pulled sharp: ${pulled.spreadFlatCents} / ${pulled.spreadSharpCents}")
+        // ...and the other way round.
+        val dragged = last(List(400) { i -> 0.1 * random.nextGaussian() - if (i % 6 == 5) 8.0 else 0.0 })
+        assertTrue(dragged.spreadFlatCents!! > 3 * dragged.spreadSharpCents!!, "pulled flat: ${dragged.spreadFlatCents} / ${dragged.spreadSharpCents}")
+
+        // A clean note leans neither way, and a note's first readings say nothing yet.
+        val clean = last(List(100) { 0.02 * random.nextGaussian() })
+        assertTrue(clean.spreadFlatCents!! < 0.2 && clean.spreadSharpCents!! < 0.2)
+        val first = last(listOf(1.0, 1.2))
+        assertTrue(first.spreadFlatCents == null && first.spreadSharpCents == null)
     }
 
     @Test

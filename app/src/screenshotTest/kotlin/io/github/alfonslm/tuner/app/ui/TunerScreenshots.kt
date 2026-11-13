@@ -50,6 +50,8 @@ private fun reading(
     instrumentId: String = "guitar",
     spreadCents: Double? = 0.3,
     confidence: Double = 0.98,
+    spreadFlatCents: Double? = spreadCents,
+    spreadSharpCents: Double? = spreadCents,
 ) = TunerReading(
     time = 10.0,
     delay = if (cents != null) 0.115 else 0.0,
@@ -61,6 +63,8 @@ private fun reading(
     frequency = cents?.let { target.frequency * centsToRatio(it) },
     cents = cents,
     spreadCents = spreadCents.takeIf { cents != null },
+    spreadFlatCents = spreadFlatCents.takeIf { cents != null },
+    spreadSharpCents = spreadSharpCents.takeIf { cents != null },
     confidence = confidence,
     inTune = inTune,
     lock = if (locked) LockInfo(target, pinned, widthCents) else null,
@@ -191,6 +195,17 @@ fun LockedWithSomethingElseSounding() = Screen(
     trace = trace { age -> 6.0 },
 ) {
     val focused = reading(it[1], cents = 6.0, widthCents = 41.0, spreadCents = 0.8, confidence = 0.66)
+    focused to focused
+}
+
+/** The estimates stray, and nearly all to the sharp side: the glow leans that way. */
+@PreviewTest
+@PhonePreview
+@Composable
+fun LockedDisturbedFromTheSharpSide() = Screen(
+    trace = trace { age -> -14.0 + 1.5 * kotlin.math.sin(age * 7) },
+) {
+    val focused = reading(it[1], cents = -14.0, widthCents = 41.0, spreadCents = 3.2, spreadFlatCents = 0.8, spreadSharpCents = 4.4)
     focused to focused
 }
 
