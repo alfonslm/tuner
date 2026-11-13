@@ -1,9 +1,7 @@
 package io.github.alfonslm.tuner.app.ui
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -39,10 +37,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -312,11 +313,24 @@ private fun Display(state: TunerUiState, modifier: Modifier = Modifier) {
                 unclear = unclarity(live?.spreadCents?.toFloat(), live?.confidence?.toFloat()),
                 time = state.latest?.time ?: 0.0,
             )
-            // Wherever it is going, it goes there gently: about a second, without overshoot. The
-            // needle is quick; the ground it moves over should not be.
-            val glide = spring<Float>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = SCALE_GLIDE_STIFFNESS)
-            val scaleCentre by animateFloatAsState(target.centre, animationSpec = glide, label = "scaleCentre")
-            val scaleRange by animateFloatAsState(target.range, animationSpec = glide, label = "scaleRange")
+            // Wherever it is going, it is never jerked there: a short way is covered quickly, a
+            // long way takes longer, and a change of mind on the way bends as smoothly (JerkLimited).
+            val centreMotion = remember { JerkLimited(target.centre) }
+            val rangeMotion = remember { JerkLimited(target.range) }
+            var scaleCentre by remember { mutableFloatStateOf(target.centre) }
+            var scaleRange by remember { mutableFloatStateOf(target.range) }
+            LaunchedEffect(target) {
+                var before = 0L
+                while (!centreMotion.atRestOn(target.centre) || !rangeMotion.atRestOn(target.range)) {
+                    withFrameNanos { now ->
+                        // A frame that took unusually long is not made up for: the scale just went on a little later.
+                        val seconds = if (before == 0L) 0f else ((now - before) / 1e9f).coerceAtMost(0.05f)
+                        before = now
+                        scaleCentre = centreMotion.step(target.centre, seconds)
+                        scaleRange = rangeMotion.step(target.range, seconds)
+                    }
+                }
+            }
             val window = ScaleWindow(scaleCentre, scaleRange)
             Column(Modifier.weight(1f)) {
                 Meter(
@@ -458,9 +472,3 @@ private fun StringButtons(strings: List<Target>, activeId: String?, pinnedId: St
 
 /** Digits of equal width, so the readouts do not jitter sideways as the numbers change. */
 private const val TABULAR = "tnum"
-
-/**
- * How softly the scale glides to a new place: a spring this weak, without
- * bounce, takes about a second to arrive (Compose's "very low" is 50).
- */
-private const val SCALE_GLIDE_STIFFNESS = 40f

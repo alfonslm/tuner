@@ -28,6 +28,7 @@ import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.exp
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.pow
 
 /** Cents shown from the centre to either end of the scale. */
@@ -154,6 +155,66 @@ class ScaleFollower(initial: ScaleWindow = ScaleWindow()) {
         lastCents = cents
         if (time - runSince >= FOLLOW_DWELL_SECONDS) window = scaleWindow(cents)
         return window
+    }
+}
+
+/** The most the scale's acceleration may change, in cents per second cubed. */
+const val SCALE_JERK = 12_000f
+
+/** How eagerly a [JerkLimited] value closes in: higher arrives sooner and leans harder on the jerk limit. */
+private const val CLOSING = 0.9f
+
+/** The stiffest it gets, close to the goal (per second): what decides how quickly the last cent is covered. */
+private const val MAX_STIFFNESS = 20f
+
+/** Steps are no longer than this (seconds); a longer frame is taken in several. */
+private const val MOTION_STEP = 0.008f
+
+/** Within this of the goal and this slow, the value is put on the goal and comes to rest. */
+private const val REST_DISTANCE = 0.01f
+private const val REST_SPEED = 0.1f
+
+/**
+ * A value that goes to wherever it is told without ever being jerked there:
+ * how quickly its acceleration may change is limited ([jerk]), and nothing
+ * else is. A short way is covered quickly, a long way takes longer (roughly
+ * with the cube root of the distance), and there is no fixed time either
+ * takes. It can be given a new goal at any moment, also on the way to the old
+ * one, and bends towards it as smoothly.
+ *
+ * It is a critically damped pull towards the goal whose stiffness depends on
+ * the distance left, chosen so that the pull by itself asks for about as much
+ * jerk as is allowed; what it still asks beyond that is cut off. It does not
+ * overshoot.
+ */
+class JerkLimited(start: Float, private val jerk: Float = SCALE_JERK) {
+    var position: Float = start
+        private set
+    private var velocity = 0f
+    private var acceleration = 0f
+
+    fun atRestOn(goal: Float): Boolean = position == goal && velocity == 0f && acceleration == 0f
+
+    /** Moves on by [seconds] towards [goal] and returns where the value is then. */
+    fun step(goal: Float, seconds: Float): Float {
+        var left = seconds
+        while (left > 0f) {
+            val time = min(left, MOTION_STEP)
+            left -= time
+            val away = goal - position
+            if (abs(away) <= REST_DISTANCE && abs(velocity) <= REST_SPEED) {
+                position = goal
+                velocity = 0f
+                acceleration = 0f
+                break
+            }
+            val stiffness = min(MAX_STIFFNESS, CLOSING * (jerk / abs(away)).pow(1f / 3))
+            val wanted = stiffness * stiffness * away - 2 * stiffness * velocity
+            acceleration += (wanted - acceleration).coerceIn(-jerk * time, jerk * time)
+            velocity += acceleration * time
+            position += velocity * time
+        }
+        return position
     }
 }
 

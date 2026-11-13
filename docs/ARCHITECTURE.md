@@ -88,9 +88,12 @@ web page: browsers only *request* that processing be turned off.
   Before this the scale went wherever the latest reading was, and in a room
   with a television on it slid and zoomed several times a second. Run through
   the engine, twenty seconds of speech-like chatter produce about a hundred
-  stray readings and do not move the scale once. When the scale does move it
-  glides: a weak spring without bounce takes it there in about a second, so
-  the needle is quick and the ground it moves over is not.
+  stray readings and do not move the scale once. When the scale does move, it
+  is limited in jerk and in nothing else (`JerkLimited`: how quickly its
+  acceleration may change, 12 000 cents/s³). There is no set time: a cent's
+  adjustment is done in a quarter of a second, 23 cents take about 0.55 s, a
+  swing of 160 about 1.2 s, none of it overshoots, and a new goal on the way
+  bends the movement instead of restarting it.
 - **The waterfall** under it: the last eight seconds on the same horizontal
   scale, newest at the top and moving down, in one of two styles chosen in the
   settings.
@@ -739,7 +742,7 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
     it chooses only among the tunings in use, tells standard from Drop D by
     the low string, reaches down to the B0 of a 5-string bass when that is in
     use, and recognises a custom tuning.
-- **32 app tests** (one of them on the recordings, when those have been decoded).
+- **33 app tests** (one of them on the recordings, when those have been decoded).
   - Nine drive the real pipeline (view model → flow → engine) with a synthetic
     microphone: a tone gets locked and shown, its spectrogram rows arrive
     without a gap, stopping closes the stream, a microphone that fails to open

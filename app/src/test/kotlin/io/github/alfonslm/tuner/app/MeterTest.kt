@@ -2,6 +2,8 @@ package io.github.alfonslm.tuner.app
 
 import io.github.alfonslm.tuner.app.ui.headTallness
 import io.github.alfonslm.tuner.app.ui.needleOpacity
+import io.github.alfonslm.tuner.app.ui.JerkLimited
+import io.github.alfonslm.tuner.app.ui.SCALE_JERK
 import io.github.alfonslm.tuner.app.ui.ScaleFollower
 import io.github.alfonslm.tuner.app.ui.ScaleWindow
 import io.github.alfonslm.tuner.app.ui.scaleWindow
@@ -48,6 +50,56 @@ class MeterTest {
         // The flat side mirrors the sharp side.
         assertEquals(-scaleWindow(120f).centre, scaleWindow(-120f).centre)
         assertEquals(scaleWindow(120f).range, scaleWindow(-120f).range)
+    }
+
+    @Test
+    fun `the scale's movement is limited in jerk, not in time`() {
+        val frame = 1f / 60
+        /** Seconds until the value has arrived at [goal] from 0, with the furthest it went beyond and the largest jerk. */
+        fun travel(goal: Float): Triple<Float, Float, Float> {
+            val motion = JerkLimited(0f)
+            var time = 0f
+            var beyond = 0f
+            var jerk = 0f
+            var speedBefore = 0f
+            var accelerationBefore = 0f
+            var positionBefore = 0f
+            var arrived = Float.NaN
+            while (time < 6f) {
+                val position = motion.step(goal, frame)
+                time += frame
+                val speed = (position - positionBefore) / frame
+                val acceleration = (speed - speedBefore) / frame
+                // Coming to rest on the goal is a last nudge of under a hundredth of a cent, not a jerk.
+                if (!motion.atRestOn(goal)) jerk = maxOf(jerk, abs(acceleration - accelerationBefore) / frame)
+                beyond = maxOf(beyond, (position - goal) * if (goal > 0) 1 else -1)
+                if (arrived.isNaN() && abs(position - goal) <= 0.02f * abs(goal)) arrived = time
+                positionBefore = position
+                speedBefore = speed
+                accelerationBefore = acceleration
+            }
+            assertTrue(motion.atRestOn(goal), "not at rest on $goal after 6 s")
+            return Triple(arrived, beyond, jerk)
+        }
+        val distances = listOf(1f, 6f, 23f, 73f, 160f)
+        val journeys = distances.map(::travel)
+        // No fixed time: a short way is quick and a long way takes longer...
+        val times = journeys.map { it.first }
+        assertTrue(times.zipWithNext().all { (a, b) -> b > a }, "times $times")
+        assertTrue(times.first() < 0.35f && times.last() in 0.8f..1.6f, "times $times")
+        // ...none of it beyond the goal...
+        assertTrue(journeys.all { it.second <= 0.05f }, "beyond ${journeys.map { it.second }}")
+        // ...and none of it jerked. (Seen at frame rate the steps add up to slightly over the limit.)
+        assertTrue(journeys.all { it.third <= 1.3f * SCALE_JERK }, "jerk ${journeys.map { it.third }}")
+        assertEquals(travel(-73f).first, travel(73f).first)
+
+        // A change of mind on the way: off towards +80, then told -40 after a quarter of a second.
+        val motion = JerkLimited(0f)
+        repeat(15) { motion.step(80f, frame) }
+        var furthest = motion.position
+        repeat(240) { furthest = maxOf(furthest, motion.step(-40f, frame)) }
+        assertTrue(motion.atRestOn(-40f))
+        assertTrue(furthest < 40f, "went on to $furthest before turning")
     }
 
     @Test
