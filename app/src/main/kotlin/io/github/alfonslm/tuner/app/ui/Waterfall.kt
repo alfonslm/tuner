@@ -53,9 +53,11 @@ private const val GRID_SECONDS = 2.0
  *
  * As a [WaterfallStyle.LINE] it shows only the reading, in the colour the
  * needle had at each moment.
+ *
+ * @param window what the scale shows, as for the meter (see [scaleWindow])
  */
 @Composable
-fun Waterfall(trace: PitchTrace, style: WaterfallStyle, inTuneCents: Float, modifier: Modifier = Modifier) {
+fun Waterfall(trace: PitchTrace, style: WaterfallStyle, inTuneCents: Float, modifier: Modifier = Modifier, window: ScaleWindow = ScaleWindow()) {
     val spectral = style == WaterfallStyle.SPECTROGRAM
     val spectrogram = remember(trace.rows, spectral, inTuneCents) {
         if (spectral) spectrogramImage(trace.rows, inTuneCents) else null
@@ -66,29 +68,29 @@ fun Waterfall(trace: PitchTrace, style: WaterfallStyle, inTuneCents: Float, modi
         val inset = METER_INSET.toPx()
         val half = size.width / 2 - inset
         val centreX = size.width / 2
-        fun x(cents: Float) = centreX + cents / METER_RANGE_CENTS * half
+        val left = centreX - half
+        val right = centreX + half
+        fun x(cents: Float) = centreX + (cents - window.centre) / window.range * half
+        fun onScale(cents: Float) = x(cents).coerceIn(left, right)
         fun y(time: Double) = ((trace.now - time) / PitchTrace.SECONDS).toFloat() * size.height
 
         if (spectral) {
             // Black wherever nothing is sounding, so that anything lit stands out.
-            drawRect(
-                color = Color.Black,
-                topLeft = Offset(x(-METER_RANGE_CENTS), 0f),
-                size = Size(x(METER_RANGE_CENTS) - x(-METER_RANGE_CENTS), size.height),
-            )
+            drawRect(color = Color.Black, topLeft = Offset(left, 0f), size = Size(right - left, size.height))
         } else {
             // Where "in tune" is, all the way down.
-            val zoneHalf = inTuneCents / METER_RANGE_CENTS * half
-            drawRect(TunerColors.Good.copy(alpha = 0.08f), Offset(centreX - zoneHalf, 0f), Size(2 * zoneHalf, size.height))
+            val zoneLeft = onScale(-inTuneCents)
+            val zoneRight = onScale(inTuneCents)
+            drawRect(TunerColors.Good.copy(alpha = 0.08f), Offset(zoneLeft, 0f), Size(zoneRight - zoneLeft, size.height))
         }
         val guide = if (spectral) Color.White.copy(alpha = 0.10f) else TunerColors.Line
-        drawLine(guide, Offset(centreX, 0f), Offset(centreX, size.height), strokeWidth = 1.dp.toPx())
+        if (x(0f) in left..right) drawLine(guide, Offset(x(0f), 0f), Offset(x(0f), size.height), strokeWidth = 1.dp.toPx())
 
         // Time lines every two seconds.
         var age = GRID_SECONDS
         while (age < PitchTrace.SECONDS) {
             val lineY = (age / PitchTrace.SECONDS).toFloat() * size.height
-            drawLine(guide.copy(alpha = guide.alpha * 0.5f), Offset(x(-METER_RANGE_CENTS), lineY), Offset(x(METER_RANGE_CENTS), lineY), strokeWidth = 1.dp.toPx())
+            drawLine(guide.copy(alpha = guide.alpha * 0.5f), Offset(left, lineY), Offset(right, lineY), strokeWidth = 1.dp.toPx())
             age += GRID_SECONDS
         }
 
@@ -97,7 +99,8 @@ fun Waterfall(trace: PitchTrace, style: WaterfallStyle, inTuneCents: Float, modi
         if (spectrogram != null) {
             val rowHeight = (spectrogram.rowSeconds / PitchTrace.SECONDS).toFloat() * size.height
             val columnWidth = (x(SPECTRUM_RANGE_CENTS.toFloat()) - x(-SPECTRUM_RANGE_CENTS.toFloat())) / (SPECTRUM_COLUMNS - 1)
-            clipRect {
+            // The rows reach further to either side than the scale shows at once.
+            clipRect(left = left, right = right) {
                 drawImage(
                     image = spectrogram.image,
                     dstOffset = IntOffset(
@@ -117,11 +120,11 @@ fun Waterfall(trace: PitchTrace, style: WaterfallStyle, inTuneCents: Float, modi
         val stroke = (if (spectral) 1.5.dp else 3.dp).toPx()
         var previous: TracePoint? = null
         for (point in trace.points) {
-            val position = Offset(x(point.cents.coerceIn(-METER_RANGE_CENTS, METER_RANGE_CENTS)), y(point.time))
+            val position = Offset(onScale(point.cents), y(point.time))
             val color = (if (spectral) Color.White else traceColor(point)).copy(alpha = fade(trace.now - point.time))
             val before = previous
             if (before != null && point.time - before.time <= GAP_SECONDS) {
-                val from = Offset(x(before.cents.coerceIn(-METER_RANGE_CENTS, METER_RANGE_CENTS)), y(before.time))
+                val from = Offset(onScale(before.cents), y(before.time))
                 drawLine(color, from, position, strokeWidth = stroke, cap = StrokeCap.Round)
             } else {
                 drawCircle(color, radius = stroke / 2, center = position)
@@ -173,7 +176,8 @@ private fun spectrogramImage(rows: List<SpectrumRow>, inTuneCents: Float): Spect
         // How loud the row is decides how bright its stripe is; how the energy is spread
         // within the row decides where the stripe is. The two are shaped separately, so a
         // quiet note still gives a clear stripe and a loud one does not flood the scale.
-        val loudness = peak.coerceAtMost(1f).pow(LOUDNESS_GAMMA)
+        // What the tuner could not read is not the string: it stays in the picture, but in the background.
+        val loudness = peak.coerceAtMost(1f).pow(LOUDNESS_GAMMA) * (if (row.read) 1f else UNREAD_BRIGHTNESS)
         for (column in 0 until SPECTRUM_COLUMNS) {
             pixels[line * SPECTRUM_COLUMNS + column] = stripeColor(row.levels[column] / peak, loudness, hues[column])
         }
@@ -182,6 +186,13 @@ private fun spectrogramImage(rows: List<SpectrumRow>, inTuneCents: Float): Spect
     bitmap.setPixels(pixels, 0, SPECTRUM_COLUMNS, 0, 0, SPECTRUM_COLUMNS, height)
     return Spectrogram(bitmap.asImageBitmap(), newest.time, newest.duration)
 }
+
+/**
+ * How bright rows are drawn for which the tuner had no reading (a pluck's
+ * attack, the string being stopped, other strings ringing on), relative to
+ * rows it could read.
+ */
+private const val UNREAD_BRIGHTNESS = 0.3f
 
 /** Rows whose strongest level is below this are left black. */
 private const val LEVEL_FLOOR = 0.03f

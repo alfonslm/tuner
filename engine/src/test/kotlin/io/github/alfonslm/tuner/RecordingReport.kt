@@ -107,9 +107,9 @@ class RecordingReport {
                     raw.cents?.let { rawCents += it }
                     if (r.time >= next) {
                         next += step
-                        val stripe = r.spectrum?.levels?.let { l -> val i = l.indices.maxBy { l[it] }; if (l[i] > 0.05f) "%+3d".format(i - 50) else " . " } ?: "   "
-                        println("REC %5.2fs %6.1fdB %-6s %-4s %s %s raw %s stripe %s  rawRange %s".format(
-                            r.time, r.levelDb, r.mode.name.take(6), r.target?.label ?: "-",
+                        val stripe = r.spectrum?.levels?.let { l -> val i = l.indices.maxBy { l[it] }; if (l[i] > 0.05f) "%+3d".format(i - (l.size - 1) / 2) else " . " } ?: "   "
+                        println("REC %5.2fs %6.1fdB conf %.2f %-6s %-4s %s %s raw %s stripe %s  rawRange %s".format(
+                            r.time, r.levelDb, r.confidence, r.mode.name.take(6), r.target?.label ?: "-",
                             r.cents?.let { "%+6.1f".format(it) } ?: "   -  ",
                             r.spreadCents?.let { "±%4.1f".format(it) } ?: "     ",
                             raw.cents?.let { "%+6.1f".format(it) } ?: "   -  ", stripe,

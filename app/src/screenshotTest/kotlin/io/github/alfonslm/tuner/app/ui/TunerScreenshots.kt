@@ -92,7 +92,7 @@ private fun trace(
             duration = rowSeconds,
             targetId = "preview",
             levels = FloatArray(SPECTRUM_COLUMNS) { column ->
-                if (centre == null) 0f else (level * kotlin.math.exp(-0.5 * ((column - 50 - centre) / sigma).let { it * it })).toFloat()
+                if (centre == null) 0f else (level * kotlin.math.exp(-0.5 * ((column - (SPECTRUM_COLUMNS - 1) / 2 - centre) / sigma).let { it * it })).toFloat()
             },
         )
     }
@@ -179,6 +179,28 @@ fun LockedInTune() = Screen(
     },
 ) {
     val focused = reading(it[3], cents = 0.6, inTune = true)
+    focused to focused
+}
+
+/** A string more than half a semitone flat: the scale has slid towards it, the in-tune zone still in sight. */
+@PreviewTest
+@PhonePreview
+@Composable
+fun LockedBeyondTheScale() = Screen(
+    trace = trace(width = { 7.0 }) { age -> -57.0 - 9 * kotlin.math.exp(-(PitchTrace.SECONDS - age) / 1.5) },
+) {
+    val focused = reading(it[3], cents = -57.0, widthCents = 92.0)
+    focused to focused
+}
+
+/** A string a long way off: the scale shows more cents instead of sliding further. */
+@PreviewTest
+@PhonePreview
+@Composable
+fun LockedFarOffScaleWidened() = Screen(
+    trace = trace(width = { 7.0 }) { age -> -165.0 + 4 * age },
+) {
+    val focused = reading(it[3], cents = -165.0, widthCents = 220.0)
     focused to focused
 }
 

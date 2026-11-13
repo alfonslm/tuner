@@ -2,6 +2,7 @@ package io.github.alfonslm.tuner.app.ui
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -297,9 +298,16 @@ private fun Display(state: TunerUiState, modifier: Modifier = Modifier) {
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
             )
+            // A string far from its note pulls the scale towards it; between readings the scale stays put.
+            val latest = remember { arrayOf(ScaleWindow()) }
+            if (cents != null) latest[0] = scaleWindow(cents.toFloat())
+            val scaleCentre by animateFloatAsState(latest[0].centre, animationSpec = tween(durationMillis = 150), label = "scaleCentre")
+            val scaleRange by animateFloatAsState(latest[0].range, animationSpec = tween(durationMillis = 150), label = "scaleRange")
+            val window = ScaleWindow(scaleCentre, scaleRange)
             Column(Modifier.weight(1f)) {
                 Meter(
                     cents = cents?.toFloat(),
+                    window = window,
                     spreadCents = shown?.spreadCents?.toFloat(),
                     tone = tone,
                     inTuneCents = state.config.display.inTuneCents.toFloat(),
@@ -309,6 +317,7 @@ private fun Display(state: TunerUiState, modifier: Modifier = Modifier) {
                     trace = state.trace,
                     style = state.waterfallStyle,
                     inTuneCents = state.config.display.inTuneCents.toFloat(),
+                    window = window,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),

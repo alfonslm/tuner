@@ -18,7 +18,10 @@ private const val BLOCK = 1024
 private const val A2 = 110.0
 
 /** Cents of the brightest column. */
-private fun FloatArray.peakCents(): Int = indices.maxBy { this[it] } - (SPECTRUM_COLUMNS - 1) / 2
+/** The column of the target itself. */
+private const val MIDDLE = (SPECTRUM_COLUMNS - 1) / 2
+
+private fun FloatArray.peakCents(): Int = indices.maxBy { this[it] } - MIDDLE
 
 /** Width in cents of the part of the row at least half as bright as its peak. */
 private fun FloatArray.widthCents(): Int {
@@ -71,7 +74,7 @@ class FoldedSpectrumTest {
         assertTrue(found)
         assertTrue(abs(levels.peakCents() - 5) <= 1)
         assertTrue(levels.max() in 0.5f..0.9f, "brightness ${levels.max()}")
-        assertTrue(levels.filterIndexed { column, _ -> abs(column - 55) > 25 }.all { it < 0.05f })
+        assertTrue(levels.filterIndexed { column, _ -> abs(column - MIDDLE - 5) > 25 }.all { it < 0.05f })
     }
 
     @Test
@@ -105,9 +108,9 @@ class FoldedSpectrumTest {
     fun `two strings a few cents apart show as two stripes`() {
         val both = mix(pluckedString(1.2, detune(A2, -14.0)), pluckedString(1.2, detune(A2, 16.0), seed = 3))
         val levels = row(both, A2).second
-        val bright = levels.indices.filter { levels[it] > 0.5f * levels.max() }.map { it - 50 }
+        val bright = levels.indices.filter { levels[it] > 0.5f * levels.max() }.map { it - MIDDLE }
         assertTrue(bright.any { abs(it + 14) <= 2 } && bright.any { abs(it - 16) <= 2 }, "bright at $bright")
-        assertTrue(levels[51] < 0.3f * levels.max(), "the gap between them: ${levels[51]}")
+        assertTrue(levels[MIDDLE + 1] < 0.3f * levels.max(), "the gap between them: ${levels[MIDDLE + 1]}")
     }
 }
 

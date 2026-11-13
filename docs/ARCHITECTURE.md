@@ -76,6 +76,12 @@ web page: browsers only *request* that processing be turned off.
 
 - **The meter**: a ±50 cent scale with a needle, coloured by how close the
   string is.
+  The scale stands still while the string is within 25 cents of its note.
+  Further out it follows the string on a curve (a little at first, more the
+  further out), so that the needle keeps moving outwards instead of resting
+  against the end; it slides only as far as leaves the in-tune zone in sight
+  at the other end, and for a string further out than that (about 90 cents)
+  it shows more cents instead. The waterfall moves with it.
 - **The waterfall** under it: the last eight seconds on the same horizontal
   scale, newest at the top and moving down, in one of two styles chosen in the
   settings.
@@ -396,7 +402,8 @@ Two further things make a mixture easier:
 ### The spectrogram
 
 The waterfall needs a spectrum on the meter's scale: ±50 cents around the
-target. Taken naively that is hopeless. At 82 Hz, ±50 cents is ±2.4 Hz, far
+target (rows are computed to ±100, a semitone, so that the scale can slide
+towards a string that is far out). Taken naively that is hopeless. At 82 Hz, ±50 cents is ±2.4 Hz, far
 below what any window of practical length resolves; the row would be one
 smear. `FoldedSpectrum` gets a usable picture out of ordinary spectrum
 analysis with two moves:
@@ -431,6 +438,15 @@ and the reading deliberately is not.
 A row is produced every third block (about 16 per second) and travels in
 `TunerReading.spectrum`.
 
+A row also says whether the tuner had a reading for the audio it describes
+(`SpectrumRow.read`). Rows without one are something other than the string: a
+pluck's attack, the string being stopped by the hand, other strings ringing on
+after it has faded. On a recording those showed as bright patches away from
+the stripe, one of them a semitone above a string that had just been damped,
+at a hundredth of its level; each row is drawn relative to its own peak, which
+is what makes a fading note stay visible and also what lifted these. They are
+drawn at 30 % brightness, so the bright stripe is the string and nothing else.
+
 ### A steady needle
 
 A real string does not give a steady estimate. Another string's overtone
@@ -460,10 +476,19 @@ What the average hides is shown next to it. `TunerReading.spreadCents` is the
 standard deviation of the estimates over the last 400 ms, measured on how far
 each lands from the needle, less the recent mean of that distance (so a peg
 being turned, with the needle steadily behind, adds little: under 2 cents at
-30 cents a second). The meter draws it as a band behind the needle, two
-standard deviations either side. On a clean note it is hidden by the needle;
-in noise, on a dying note or against a beating overtone it is several cents
-wide and says how far the needle can be trusted.
+30 cents a second).
+
+The meter draws it into the needle itself, which is three soft things laid
+over each other. A glow, fading from its middle towards all its edges, has
+the scatter as its sigma: it is where single estimates fall. A bulge in it,
+four times narrower, is where their average, the reading, is. A line through
+the middle is only as crisp as the note is clear: solid up to 1 cent of
+scatter, fading from there, all but gone from 6 cents on. The bulge and the
+line also get shorter the less clear the note is, and the glow is low. A clear
+note is a tall sharp needle; a weak or broken-up one a short soft peak that
+runs out into a wide low glow. (The engine's `confidence` would have been the
+obvious thing to fade by, but on the recordings it sits between 0.96 and 1.0
+whatever the reading is worth; the scatter is what tells them apart.)
 
 Nothing is shown for 150 ms after a pluck is noticed, nor in a frame that is
 10 dB louder than the quietest of the three before it: that is the pluck
@@ -677,7 +702,7 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
     it chooses only among the tunings in use, tells standard from Drop D by
     the low string, reaches down to the B0 of a 5-string bass when that is in
     use, and recognises a custom tuning.
-- **25 app tests**.
+- **27 app tests**.
   - Nine drive the real pipeline (view model → flow → engine) with a synthetic
     microphone: a tone gets locked and shown, its spectrogram rows arrive
     without a gap, stopping closes the stream, a microphone that fails to open

@@ -143,7 +143,7 @@ class EngineTest {
             assertTrue(abs(cents.average() - 0.3) < 0.5, "low strings $lowStrings: mean ${cents.average()}")
             assertTrue(cents.max() - cents.min() < 1.5, "low strings $lowStrings: ${cents.min()}..${cents.max()}")
             // The spectrogram's stripe is where the needle is.
-            val stripe = readings.mapNotNull { it.spectrum }.map { row -> row.levels.indices.maxBy { row.levels[it] } - 50.0 }
+            val stripe = readings.mapNotNull { it.spectrum }.map { row -> row.levels.indices.maxBy { row.levels[it] } - (row.levels.size - 1) / 2.0 }
             assertTrue(abs(stripe.average() - cents.average()) < 0.7, "stripe ${stripe.average()}, needle ${cents.average()}")
         }
     }
@@ -189,6 +189,10 @@ class EngineTest {
         val after = readings.between(2.3, 4.4).filter { it.voiced }
         assertTrue(after.first().time in 2.5..2.75, "first reading at ${after.first().time}")
         assertTrue(after.all { abs(it.cents!! + 8) < 1.0 }, "readings after the pluck: ${after.map { it.cents }.take(12)}")
+        // The spectrogram's rows say whether the tuner could read what they show.
+        val rows = readings.mapNotNull { it.spectrum }
+        assertTrue(rows.filter { it.time in 1.0..1.8 || it.time in 3.0..4.0 }.all { it.read })
+        assertTrue(rows.filter { it.time in 2.15..2.35 }.none { it.read }, "rows in the gap: ${rows.filter { it.time in 2.15..2.35 }.map { it.read }}")
     }
 
     @Test

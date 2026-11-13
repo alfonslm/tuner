@@ -33,6 +33,12 @@ class SpectrumRow(
     val targetId: String,
     /** `SPECTRUM_COLUMNS` levels in 0..1, from -`SPECTRUM_RANGE_CENTS` to +`SPECTRUM_RANGE_CENTS`. */
     val levels: FloatArray,
+    /**
+     * Whether the tuner had a reading for the audio this row describes. Rows
+     * without one are whatever else was sounding: a pluck's attack, the string
+     * being stopped by the hand, other strings ringing on after it has faded.
+     */
+    val read: Boolean = true,
 )
 
 /** One analysis result. The engine produces exactly one per audio block. */

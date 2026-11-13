@@ -11,10 +11,13 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /** Columns of a spectrogram row: one per cent from -[SPECTRUM_RANGE_CENTS] to +[SPECTRUM_RANGE_CENTS]. */
-const val SPECTRUM_COLUMNS = 101
+const val SPECTRUM_COLUMNS = 201
 
-/** Cents shown either side of the target; matches the meter's scale. */
-const val SPECTRUM_RANGE_CENTS = 50.0
+/**
+ * Cents covered either side of the target: a semitone, twice what the meter
+ * shows at once, so that the scale can slide towards a string that is far out.
+ */
+const val SPECTRUM_RANGE_CENTS = 100.0
 
 data class FoldedSpectrumOptions(
     /** Analysis window length in periods of the target note. Sets the resolution: about 400 / (periods · partial number) cents. */

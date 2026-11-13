@@ -98,6 +98,9 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
     private lateinit var smoother: ReadingSmoother
     private val recentLevels = DoubleArray(3) { 0.0 }
     private var blocksSeen = 0L
+
+    /** Whether each of the last blocks produced a reading, by block number. */
+    private val readBlocks = BooleanArray(64)
     private var lock: Lock? = null
     private var samples = 0L
 
@@ -189,9 +192,10 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         val plucked = pluckedAt
         if (plucked != null && (samples - plucked) * 1000.0 / sampleRate < config.display.attackHoldMs) pitch = null
         if (levelDb - recentLevels.min() >= config.display.surgeDb) pitch = null
-        recentLevels[(blocksSeen++ % recentLevels.size).toInt()] = levelDb
+        recentLevels[(++blocksSeen % recentLevels.size).toInt()] = levelDb
 
         // 4. Display smoothing.
+        readBlocks[(blocksSeen % readBlocks.size).toInt()] = pitch != null
         val row = spectrumRow(time, audible, pitch?.target ?: lock?.target)
         val result = if (pitch == null) {
             reading(time, levelDb, null, null, null, false, row)
@@ -246,7 +250,17 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
             duration = options.everyBlocks * blockSize.toDouble() / sampleRate,
             targetId = target.id,
             levels = levels,
+            read = readAround(analysis.frameLength / 2),
         )
+    }
+
+    /** Whether there was a reading for the audio [samplesAgo] back: readings come a few blocks after their audio. */
+    private fun readAround(samplesAgo: Int): Boolean {
+        val from = blocksSeen - samplesAgo / blockSize
+        for (block in from..minOf(blocksSeen, from + READING_LAG_BLOCKS)) {
+            if (block > blocksSeen - readBlocks.size && block >= 0 && readBlocks[(block % readBlocks.size).toInt()]) return true
+        }
+        return false
     }
 
     /** Switches to an instrument's own strings once the notes heard so far single one out. */
@@ -532,6 +546,9 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         )
     }
 }
+
+/** A reading describes audio up to about this many blocks before it (analysis window, median). */
+private const val READING_LAG_BLOCKS = 4
 
 /** Which multiple of [fundamental] the [frequency] is (1 = the same pitch), or 0 if it is none of them. */
 private fun overtoneNumber(frequency: Double, fundamental: Double): Int {

@@ -119,7 +119,7 @@ class TunerViewModelTest {
         val rows = pictured.trace.rows
         assertTrue(rows.zipWithNext().all { (a, b) -> abs(b.time - a.time - a.duration) < 1e-6 }, "rows are not contiguous")
         val stripe = rows.last().levels
-        assertTrue(abs(stripe.indices.maxBy { stripe[it] } - 50 - 7) <= 3)
+        assertTrue(abs(stripe.indices.maxBy { stripe[it] } - (stripe.size - 1) / 2 - 7) <= 3)
         viewModel.stop()
         assertTrue(viewModel.state.value.trace.points.isEmpty() && viewModel.state.value.trace.rows.isEmpty())
     }
