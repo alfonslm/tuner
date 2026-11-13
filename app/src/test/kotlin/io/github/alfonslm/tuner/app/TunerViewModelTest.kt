@@ -270,6 +270,32 @@ class TunerViewModelTest {
     }
 
     @Test
+    fun `the needle response is saved and sets how long the engine averages`() {
+        val settings = MemorySettings(guitar)
+        val viewModel = viewModel(ToneSource(A2), settings)
+        assertEquals(NeedleResponse.NORMAL, viewModel.state.value.needleResponse)
+        assertEquals(200.0, viewModel.state.value.config.display.smoothingMs)
+
+        viewModel.setNeedleResponse(NeedleResponse.STEADY)
+        assertEquals(NeedleResponse.STEADY, settings.saved.needleResponse)
+        assertEquals(400.0, viewModel.state.value.config.display.smoothingMs)
+
+        // The slower needle is further behind its audio, and says so.
+        viewModel.start()
+        val steady = viewModel.await("a reading") { it.latest?.voiced == true }.latest!!.delay
+        viewModel.setNeedleResponse(NeedleResponse.FAST)
+        val fast = viewModel.await("a reading after the change") {
+            it.config.display.smoothingMs == 100.0 && it.latest?.voiced == true && it.latest!!.delay < steady
+        }.latest!!.delay
+        assertEquals(0.3, steady - fast, 0.01)
+        viewModel.stop()
+
+        val again = viewModel(ToneSource(A2), settings)
+        assertEquals(NeedleResponse.FAST, again.state.value.needleResponse)
+        assertEquals(100.0, again.state.value.config.display.smoothingMs)
+    }
+
+    @Test
     fun `the line style switches the spectrogram off, the spectrogram style back on`() {
         val settings = MemorySettings(guitar)
         val viewModel = viewModel(ToneSource(A2), settings)

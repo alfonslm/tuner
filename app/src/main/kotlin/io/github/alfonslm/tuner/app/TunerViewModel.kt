@@ -35,6 +35,7 @@ data class TunerUiState(
     /** Every tuning, in use or not, for the settings list. */
     val tunings: List<Tuning> = TuningCatalog.standard.tunings,
     val waterfallStyle: WaterfallStyle = WaterfallStyle.SPECTROGRAM,
+    val needleResponse: NeedleResponse = NeedleResponse.NORMAL,
     /** Automatic mode only: the instrument recognised from the strings played so far, once there is one. */
     val detectedInstrument: InstrumentPreset? = null,
     /** The strings of the instrument being tuned; empty while chromatic (or not yet recognised). */
@@ -69,6 +70,7 @@ class TunerViewModel(
 
     private var catalog: TuningCatalog
     private var waterfallStyle: WaterfallStyle
+    private var needleResponse: NeedleResponse
     private val config: MutableStateFlow<TunerConfig>
     private val _state: MutableStateFlow<TunerUiState>
     val state: StateFlow<TunerUiState>
@@ -79,14 +81,16 @@ class TunerViewModel(
         val saved = settings.load()
         catalog = saved.tunings
         waterfallStyle = saved.waterfallStyle
+        needleResponse = saved.needleResponse
         config = MutableStateFlow(
-            TunerConfig(a4 = saved.a4, smartFilter = saved.smartFilter).withTunings(saved.instrumentId).withWaterfall(),
+            TunerConfig(a4 = saved.a4, smartFilter = saved.smartFilter).withTunings(saved.instrumentId).withWaterfall().withResponse(),
         )
         _state = MutableStateFlow(
             TunerUiState(
                 config = config.value,
                 tunings = catalog.tunings,
                 waterfallStyle = waterfallStyle,
+                needleResponse = needleResponse,
                 strings = stringsOf(config.value, null),
             ),
         )
@@ -145,6 +149,11 @@ class TunerViewModel(
         configure { it.withWaterfall() }
     }
 
+    fun setNeedleResponse(response: NeedleResponse) {
+        needleResponse = response
+        configure { it.withResponse() }
+    }
+
     // --- tunings ---
 
     fun setTuningEnabled(id: String, enabled: Boolean) = changeTunings { it.setEnabled(id, enabled) }
@@ -184,12 +193,15 @@ class TunerViewModel(
     private fun TunerConfig.withWaterfall(): TunerConfig =
         copy(spectrogram = spectrogram.copy(enabled = waterfallStyle == WaterfallStyle.SPECTROGRAM))
 
+    private fun TunerConfig.withResponse(): TunerConfig =
+        copy(display = display.copy(smoothingMs = needleResponse.smoothingMs))
+
     /** Applies a settings change: to the engine (through [config]), to disk, and to the screen. */
     private fun configure(change: (TunerConfig) -> TunerConfig) {
         val previous = config.value
         val updated = change(previous)
         config.value = updated
-        settings.save(Settings(updated.instrumentId, updated.a4, updated.smartFilter, waterfallStyle, catalog))
+        settings.save(Settings(updated.instrumentId, updated.a4, updated.smartFilter, waterfallStyle, needleResponse, catalog))
         _state.update { state ->
             // The recognised instrument may just have been edited, switched off or deleted.
             val detected = state.detectedInstrument?.let { known -> updated.tunings.find { it == known } }
@@ -198,6 +210,7 @@ class TunerViewModel(
                 instruments = instrumentsOf(updated),
                 tunings = catalog.tunings,
                 waterfallStyle = waterfallStyle,
+                needleResponse = needleResponse,
                 detectedInstrument = detected,
                 strings = stringsOf(updated, detected),
             )

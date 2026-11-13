@@ -104,8 +104,8 @@ The top right corner has two uses. While the tuner runs it is the smart-filter
 switch; while it is stopped it is the button that opens the settings, since
 neither is wanted in the other state.
 
-A second screen, **Settings**, holds the waterfall style and the list of
-tunings: every standard tuning with a switch that puts it in or out of use,
+A second screen, **Settings**, holds the waterfall style, the needle response
+(see "A steady needle") and the list of tunings: every standard tuning with a switch that puts it in or out of use,
 and a *Duplicate* button that makes an editable copy (name, the note of each
 string, more or fewer strings). Only the tunings in use appear in the
 instrument picker and are candidates for automatic recognition. Changes apply
@@ -365,7 +365,9 @@ several cents either way. `ReadingSmoother` steadies the needle against that:
   moving average to take over.
 
 The price is that the needle trails a peg that is being turned by those
-200 ms: 6 cents at 30 cents a second.
+200 ms: 6 cents at 30 cents a second. How to trade the two is a matter of
+taste and of the instrument, so the settings offer three responses: **Fast**
+(100 ms), **Normal** (200 ms, the default) and **Steady** (400 ms).
 
 An average that adapts (slow near the needle, fast far from it) was tried
 first. It was no steadier against beating, since the beat swings further than
@@ -519,7 +521,7 @@ ones that shape behaviour:
 | `wide.minClarity` / `minLockClarity` | 0.75 / 0.5 | periodicity needed for a wide-band reading to be shown / to count towards a lock |
 | `wide.peakPickRatio` | 0.65 | how readily a shorter period is preferred |
 | `fresh.memoryMs` / `fadeMs` / `onsetRise` | 500 / 1500 / 0.25 | hearing a plucked string apart from ringing ones |
-| `display.smoothingMs` | 200 | time constant of the needle's moving average; longer is steadier and trails a turning peg further |
+| `display.smoothingMs` | 200 | time constant of the needle's moving average; longer is steadier and trails a turning peg further. Set from the Needle response setting (100 / 200 / 400) |
 | `display.attackHoldMs` | 150 | nothing is shown for this long after a pluck |
 | `display.inTuneCents` / `inTuneHoldMs` | 3 / 400 | when the display turns green |
 
@@ -567,7 +569,7 @@ app and reach the engine the same way, as entries of `TunerConfig.tunings`.
     it chooses only among the tunings in use, tells standard from Drop D by
     the low string, reaches down to the B0 of a 5-string bass when that is in
     use, and recognises a custom tuning.
-- **24 app tests**.
+- **25 app tests**.
   - Nine drive the real pipeline (view model → flow → engine) with a synthetic
     microphone: a tone gets locked and shown, its spectrogram rows arrive
     without a gap, stopping closes the stream, a microphone that fails to open

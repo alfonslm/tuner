@@ -97,6 +97,7 @@ private fun TunerApp(viewModel: TunerViewModel = viewModel(factory = TunerViewMo
         SettingsActions(
             onBack = { showSettings = false },
             onWaterfallStyle = viewModel::setWaterfallStyle,
+            onNeedleResponse = viewModel::setNeedleResponse,
             onTuningEnabled = viewModel::setTuningEnabled,
             onDuplicateTuning = viewModel::duplicateTuning,
             onRenameTuning = viewModel::renameTuning,

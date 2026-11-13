@@ -15,12 +15,24 @@ enum class WaterfallStyle {
     LINE,
 }
 
+/**
+ * How quickly the needle follows the pitch: the time its moving average
+ * spans. Shorter follows a turning peg more closely, longer holds stiller on
+ * a note that wavers.
+ */
+enum class NeedleResponse(val smoothingMs: Double) {
+    FAST(100.0),
+    NORMAL(200.0),
+    STEADY(400.0),
+}
+
 /** The choices that survive closing the app. A pinned string deliberately does not. */
 data class Settings(
     val instrumentId: String = DEFAULT_INSTRUMENT_ID,
     val a4: Double = DEFAULT_A4,
     val smartFilter: SmartFilterMode = SmartFilterMode.AUTO,
     val waterfallStyle: WaterfallStyle = WaterfallStyle.SPECTROGRAM,
+    val needleResponse: NeedleResponse = NeedleResponse.NORMAL,
     val tunings: TuningCatalog = TuningCatalog.standard,
 )
 
@@ -45,6 +57,8 @@ class PreferencesSettingsStore(context: Context) : SettingsStore {
             smartFilter = if (preferences.getBoolean(KEY_FILTER, true)) SmartFilterMode.AUTO else SmartFilterMode.OFF,
             waterfallStyle = WaterfallStyle.entries.find { it.name == preferences.getString(KEY_WATERFALL, null) }
                 ?: defaults.waterfallStyle,
+            needleResponse = NeedleResponse.entries.find { it.name == preferences.getString(KEY_RESPONSE, null) }
+                ?: defaults.needleResponse,
             tunings = TuningCatalog.restore(switches, preferences.getString(KEY_CUSTOM_TUNINGS, null).orEmpty()),
         )
     }
@@ -55,6 +69,7 @@ class PreferencesSettingsStore(context: Context) : SettingsStore {
             putFloat(KEY_A4, settings.a4.toFloat())
             putBoolean(KEY_FILTER, settings.smartFilter == SmartFilterMode.AUTO)
             putString(KEY_WATERFALL, settings.waterfallStyle.name)
+            putString(KEY_RESPONSE, settings.needleResponse.name)
             putStringSet(KEY_TUNING_SWITCHES, settings.tunings.switches.map { (id, on) -> "$id=${if (on) 1 else 0}" }.toSet())
             putString(KEY_CUSTOM_TUNINGS, settings.tunings.encodeCustom())
         }
@@ -65,6 +80,7 @@ class PreferencesSettingsStore(context: Context) : SettingsStore {
         const val KEY_A4 = "a4"
         const val KEY_FILTER = "smartFilter"
         const val KEY_WATERFALL = "waterfall"
+        const val KEY_RESPONSE = "needleResponse"
         const val KEY_TUNING_SWITCHES = "tuningSwitches"
         const val KEY_CUSTOM_TUNINGS = "customTunings"
     }

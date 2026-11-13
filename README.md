@@ -54,6 +54,8 @@ Requires Android 8.0 (API 26) or newer.
    is while it runs) opens **Settings**:
    - *Waterfall*: the history under the meter as a colour spectrogram or as a
      plain line.
+   - *Needle response*: Fast, Normal or Steady, which is how long the needle
+     averages the reading (0.1, 0.2 or 0.4 s).
    - *Tunings*: switch the standard tunings on and off (Automatic only chooses
      among those that are on), or **Duplicate** one and edit the copy's name,
      notes and number of strings to make your own.

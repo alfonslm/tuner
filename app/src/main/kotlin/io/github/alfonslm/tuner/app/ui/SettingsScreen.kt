@@ -47,6 +47,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import io.github.alfonslm.tuner.app.NeedleResponse
 import io.github.alfonslm.tuner.app.R
 import io.github.alfonslm.tuner.app.Tuning
 import io.github.alfonslm.tuner.app.TuningCatalog
@@ -57,6 +58,7 @@ import io.github.alfonslm.tuner.app.WaterfallStyle
 class SettingsActions(
     val onBack: () -> Unit,
     val onWaterfallStyle: (WaterfallStyle) -> Unit,
+    val onNeedleResponse: (NeedleResponse) -> Unit,
     val onTuningEnabled: (id: String, enabled: Boolean) -> Unit,
     /** Returns the id of the copy, so its editor can be opened straight away. */
     val onDuplicateTuning: (id: String) -> String?,
@@ -68,7 +70,7 @@ class SettingsActions(
 )
 
 /**
- * Settings: how the waterfall looks, and the list of tunings. Every change
+ * Settings: how the waterfall looks, how quickly the needle moves, and the list of tunings. Every change
  * applies at once; there is nothing to save.
  *
  * @param initiallyEditing id of a custom tuning whose editor starts open
@@ -111,7 +113,35 @@ fun SettingsScreen(state: TunerUiState, actions: SettingsActions, modifier: Modi
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             SectionTitle(stringResource(R.string.settings_waterfall))
-            WaterfallChoice(state.waterfallStyle, actions.onWaterfallStyle)
+            Choice(
+                options = WaterfallStyle.entries,
+                selected = state.waterfallStyle,
+                onSelect = actions.onWaterfallStyle,
+                label = { if (it == WaterfallStyle.SPECTROGRAM) R.string.waterfall_spectrogram else R.string.waterfall_line },
+                hint = { if (it == WaterfallStyle.SPECTROGRAM) R.string.waterfall_spectrogram_hint else R.string.waterfall_line_hint },
+            )
+
+            Spacer(Modifier.height(8.dp))
+            SectionTitle(stringResource(R.string.settings_response))
+            Choice(
+                options = NeedleResponse.entries,
+                selected = state.needleResponse,
+                onSelect = actions.onNeedleResponse,
+                label = {
+                    when (it) {
+                        NeedleResponse.FAST -> R.string.response_fast
+                        NeedleResponse.NORMAL -> R.string.response_normal
+                        NeedleResponse.STEADY -> R.string.response_steady
+                    }
+                },
+                hint = {
+                    when (it) {
+                        NeedleResponse.FAST -> R.string.response_fast_hint
+                        NeedleResponse.NORMAL -> R.string.response_normal_hint
+                        NeedleResponse.STEADY -> R.string.response_steady_hint
+                    }
+                },
+            )
 
             Spacer(Modifier.height(8.dp))
             SectionTitle(stringResource(R.string.settings_tunings))
@@ -139,9 +169,9 @@ private fun SectionTitle(text: String) {
     )
 }
 
-/** Two-way choice with a line under it saying what the selected style shows. */
+/** A choice among a few options, with a line under it saying what the selected one does. */
 @Composable
-private fun WaterfallChoice(selected: WaterfallStyle, onSelect: (WaterfallStyle) -> Unit) {
+private fun <T> Choice(options: List<T>, selected: T, onSelect: (T) -> Unit, label: (T) -> Int, hint: (T) -> Int) {
     val shape = RoundedCornerShape(12.dp)
     Row(
         Modifier
@@ -151,19 +181,19 @@ private fun WaterfallChoice(selected: WaterfallStyle, onSelect: (WaterfallStyle)
             .background(TunerColors.Panel)
             .border(1.dp, TunerColors.Line, shape),
     ) {
-        for (style in WaterfallStyle.entries) {
-            val chosen = style == selected
+        for (option in options) {
+            val chosen = option == selected
             Box(
                 Modifier
                     .weight(1f)
                     .fillMaxSize()
                     .background(if (chosen) TunerColors.Accent else TunerColors.Panel)
-                    .clickable(role = Role.RadioButton) { onSelect(style) }
+                    .clickable(role = Role.RadioButton) { onSelect(option) }
                     .semantics { this.selected = chosen },
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    stringResource(if (style == WaterfallStyle.SPECTROGRAM) R.string.waterfall_spectrogram else R.string.waterfall_line),
+                    stringResource(label(option)),
                     color = if (chosen) TunerColors.OnAccent else TunerColors.Text,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
@@ -172,7 +202,7 @@ private fun WaterfallChoice(selected: WaterfallStyle, onSelect: (WaterfallStyle)
         }
     }
     Text(
-        stringResource(if (selected == WaterfallStyle.SPECTROGRAM) R.string.waterfall_spectrogram_hint else R.string.waterfall_line_hint),
+        stringResource(hint(selected)),
         style = MaterialTheme.typography.bodySmall,
         color = TunerColors.Muted,
     )

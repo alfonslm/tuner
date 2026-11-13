@@ -30,7 +30,7 @@ import io.github.alfonslm.tuner.music.findInstrument
 // `./gradlew :app:validateDebugScreenshotTest` fails if the UI no longer matches them.
 
 private val NoActions = TunerActions({}, {}, {}, {}, {}, {})
-private val NoSettingsActions = SettingsActions({}, {}, { _, _ -> }, { null }, { _, _ -> }, { _, _, _ -> }, {}, { _, _ -> }, {})
+private val NoSettingsActions = SettingsActions({}, {}, {}, { _, _ -> }, { null }, { _, _ -> }, { _, _, _ -> }, {}, { _, _ -> }, {})
 
 private fun instrumentById(id: String) = checkNotNull(findInstrument(id, STANDARD_TUNINGS))
 
