@@ -9,7 +9,7 @@ Native Kotlin, Jetpack Compose. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 for how it works.
 
 <p>
-  <img src="app/src/screenshotTestDebug/reference/io/github/alfonslm/tuner/app/ui/TunerScreenshotsKt/LockedSharp_fd9b1438_0.png" width="240" alt="Locked on A2, 14 cents sharp">
+  <img src="app/src/screenshotTestDebug/reference/io/github/alfonslm/tuner/app/ui/TunerScreenshotsKt/RealEngineOutput_fd9b1438_0.png" width="240" alt="An A string being tuned up, with its spectrogram">
   <img src="app/src/screenshotTestDebug/reference/io/github/alfonslm/tuner/app/ui/TunerScreenshotsKt/LockedInTune_fd9b1438_0.png" width="240" alt="G3 in tune">
 </p>
 

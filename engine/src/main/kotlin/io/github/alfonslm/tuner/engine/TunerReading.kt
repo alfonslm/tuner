@@ -20,6 +20,21 @@ data class LockInfo(
     val widthCents: Double,
 )
 
+/**
+ * One row of the rolling spectrogram: the string's spectrum on a cents scale
+ * centred on a target, noise floor removed (see `FoldedSpectrum`).
+ */
+class SpectrumRow(
+    /** Stream time of the middle of the audio the row was computed from. */
+    val time: Double,
+    /** Seconds until the next row: how much time this one stands for. */
+    val duration: Double,
+    /** The target the cents scale is centred on. */
+    val targetId: String,
+    /** `SPECTRUM_COLUMNS` levels in 0..1, from -`SPECTRUM_RANGE_CENTS` to +`SPECTRUM_RANGE_CENTS`. */
+    val levels: FloatArray,
+)
+
 /** One analysis result. The engine produces exactly one per audio block. */
 data class TunerReading(
     /** Stream time in seconds. */
@@ -39,17 +54,13 @@ data class TunerReading(
     /** Smoothed pitch and its offset from [target]; `null` when not [voiced]. */
     val frequency: Double?,
     val cents: Double?,
-    /**
-     * How far the individual overtones disagree about the pitch, in cents
-     * (power-weighted RMS, smoothed like [cents]). Near zero for a clean string;
-     * wider for a stiff or noisy one. `null` when not [voiced] or not measurable.
-     */
-    val spreadCents: Double?,
     /** 0..1 */
     val confidence: Double,
     /** Within tolerance, and has been for a moment. */
     val inTune: Boolean,
     val lock: LockInfo?,
+    /** A new row of the spectrogram, on the frames that produce one. */
+    val spectrum: SpectrumRow? = null,
 ) {
     /** True when this frame produced a pitch. */
     val voiced: Boolean get() = source != null

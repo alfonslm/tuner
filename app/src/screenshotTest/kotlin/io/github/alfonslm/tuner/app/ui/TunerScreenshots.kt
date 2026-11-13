@@ -7,10 +7,13 @@ import io.github.alfonslm.tuner.app.PitchTrace
 import io.github.alfonslm.tuner.app.TracePoint
 import io.github.alfonslm.tuner.app.TunerError
 import io.github.alfonslm.tuner.app.TunerUiState
+import io.github.alfonslm.tuner.dsp.SPECTRUM_COLUMNS
 import io.github.alfonslm.tuner.engine.LockInfo
 import io.github.alfonslm.tuner.engine.PitchSource
 import io.github.alfonslm.tuner.engine.SmartFilterMode
+import io.github.alfonslm.tuner.engine.SpectrumRow
 import io.github.alfonslm.tuner.engine.TunerConfig
+import io.github.alfonslm.tuner.engine.TunerEngine
 import io.github.alfonslm.tuner.engine.TunerMode
 import io.github.alfonslm.tuner.engine.TunerReading
 import io.github.alfonslm.tuner.music.Target
@@ -48,7 +51,6 @@ private fun reading(
     target = target,
     frequency = cents?.let { target.frequency * centsToRatio(it) },
     cents = cents,
-    spreadCents = cents?.let { 1.0 },
     confidence = 0.95,
     inTune = inTune,
     lock = if (locked) LockInfo(target, pinned, widthCents) else null,
@@ -56,18 +58,36 @@ private fun reading(
 
 /**
  * A history ending now (t = 10 s): `cents(age)` gives the offset `age` seconds ago,
- * or null where no note was sounding; `spread(age)` the overtone spread at that moment.
+ * or null where no note was sounding. The spectrogram is a stripe along the same
+ * path, `width(age)` cents wide, fading as each note rings out.
  */
 private fun trace(
     inTuneBelow: Float = 3f,
-    spread: (age: Double) -> Double = { 1.0 },
+    width: (age: Double) -> Double = { 9.0 },
     cents: (age: Double) -> Double?,
 ): PitchTrace {
     val points = (0..(PitchTrace.SECONDS * 47).toInt()).mapNotNull { step ->
         val age = PitchTrace.SECONDS - step / 47.0
-        cents(age)?.let { TracePoint(10.0 - age, it.toFloat(), spread(age).toFloat(), kotlin.math.abs(it) <= inTuneBelow) }
+        cents(age)?.let { TracePoint(10.0 - age, it.toFloat(), kotlin.math.abs(it) <= inTuneBelow) }
     }
-    return PitchTrace("preview", points, now = 10.0)
+    val rowSeconds = 3 * 1024 / 48000.0
+    var sounding = 0.0
+    val rows = (0..(PitchTrace.SECONDS / rowSeconds).toInt()).map { step ->
+        val age = PitchTrace.SECONDS - step * rowSeconds
+        val centre = cents(age)
+        sounding = if (centre == null) 0.0 else sounding + rowSeconds
+        val level = 0.95 * kotlin.math.exp(-sounding / 3.5)
+        val sigma = width(age) / 2.355
+        SpectrumRow(
+            time = 10.0 - age,
+            duration = rowSeconds,
+            targetId = "preview",
+            levels = FloatArray(SPECTRUM_COLUMNS) { column ->
+                if (centre == null) 0f else (level * kotlin.math.exp(-0.5 * ((column - 50 - centre) / sigma).let { it * it })).toFloat()
+            },
+        )
+    }
+    return PitchTrace("preview", points, rows, now = 10.0)
 }
 
 @Composable
@@ -117,9 +137,8 @@ fun SearchingWideBand() = Screen(trace = trace { age -> (-22.0 + 3 * kotlin.math
 @PhonePreview
 @Composable
 fun LockedSharp() = Screen(
-    // Tuned up from flat in two turns of the peg, overshooting a little. The overtones
-    // disagree most just after each pluck and settle as the note rings.
-    trace = trace(spread = { age -> 1.2 + 5.0 * kotlin.math.exp(-((7.0 - age) % 2.9) * 1.4) }) { age ->
+    // Tuned up from flat in two turns of the peg, overshooting a little.
+    trace = trace { age ->
         when {
             age > 7.0 -> null
             age > 4.6 -> -38.0 + (7.0 - age) * 1.5
@@ -139,7 +158,7 @@ fun LockedSharp() = Screen(
 @Composable
 fun LockedInTune() = Screen(
     // Two plucks: the first settling in from sharp, the second steady.
-    trace = trace(spread = { age -> 0.6 + 3.0 * kotlin.math.exp(-(if (age > 3.0) 6.5 - age else 2.9 - age) * 2.5) }) { age ->
+    trace = trace { age ->
         when {
             age > 6.5 -> null
             age > 3.6 -> 0.6 + 9.0 * kotlin.math.exp(-(6.5 - age) * 2.2)
@@ -198,11 +217,59 @@ fun AutomaticIdentifiedUkulele() = Screen(
     config = TunerConfig(),
     detected = "ukulele",
     // A new string slowly going flat as it stretches.
-    // ...and getting vaguer as the note dies away into room noise.
-    trace = trace(spread = { age -> 1.0 + (5.5 - age).coerceAtLeast(0.0) }) { age -> (6.0 + age * 2.4).takeIf { age < 5.5 } },
+    // The stripe widens as the bright overtones die away and leave less to resolve.
+    trace = trace(width = { age -> 9.0 + (5.5 - age).coerceAtLeast(0.0) * 2.5 }) { age -> (6.0 + age * 2.4).takeIf { age < 5.5 } },
 ) {
     val focused = reading(it[2], cents = 6.0, widthCents = 41.0, instrumentId = "ukulele")
     focused to focused
+}
+
+/**
+ * Not made-up data: ten seconds of a synthesized A string in a little room noise,
+ * plucked three times and tuned up between plucks, run through the real engine.
+ * What this shows is what the spectrogram of such a sound actually looks like.
+ */
+@PreviewTest
+@PhonePreview
+@Composable
+fun RealEngineOutput() {
+    val sampleRate = 48_000
+    val block = 1024
+    // (start second, cents at the pluck, cents it settles at after the peg is turned)
+    val plucks = listOf(Triple(1.2, -36.0, -36.0), Triple(4.0, -36.0, -9.0), Triple(7.0, -9.0, 4.0))
+    val noise = java.util.Random(4)
+    val signal = FloatArray(10 * sampleRate)
+    for ((start, from, to) in plucks) {
+        var phase = 0.0
+        for (i in (start * sampleRate).toInt() until signal.size) {
+            val t = i.toDouble() / sampleRate - start
+            val cents = from + (to - from) * ((t - 0.5) / 0.9).coerceIn(0.0, 1.0)
+            phase += 2 * Math.PI * 110.0 * centsToRatio(cents) / sampleRate
+            var sample = 0.0
+            for (k in 1..8) {
+                val stretch = kotlin.math.sqrt(1 + 5e-5 * k * k)
+                sample += kotlin.math.sin(k * stretch * phase + k) / k * kotlin.math.exp(-t * (0.5 + 0.25 * k))
+            }
+            // The string is damped by the next pluck.
+            val ringing = plucks.firstOrNull { it.first > start }?.let { ((it.first - start - t) / 0.02).coerceIn(0.0, 1.0) } ?: 1.0
+            signal[i] += (0.2 * sample * ringing).toFloat()
+        }
+    }
+    for (i in signal.indices) signal[i] += (0.002 * noise.nextGaussian()).toFloat()
+
+    val engine = TunerEngine(sampleRate, block, Guitar)
+    var trace = PitchTrace()
+    var latest: TunerReading? = null
+    var shown: TunerReading? = null
+    for (offset in 0..signal.size - block step block) {
+        val reading = engine.process(signal.copyOfRange(offset, offset + block))
+        trace = trace.add(reading)
+        latest = reading
+        if (reading.voiced) shown = reading
+    }
+    TunerTheme {
+        TunerScreen(TunerUiState(Guitar, strings = strings("guitar", 440.0), running = true, latest = latest, shown = shown, trace = trace), NoActions)
+    }
 }
 
 @PreviewTest

@@ -113,8 +113,15 @@ class TunerViewModelTest {
         val traced = viewModel.await("a second of history") { it.trace.points.size >= 40 }
         assertTrue(traced.trace.points.takeLast(20).all { abs(it.cents - 7) < 1 })
         assertEquals(traced.shown!!.target!!.id, traced.trace.targetId)
+
+        // ...and the spectrogram fills in behind it, a stripe at the same place, with no row lost on the way.
+        val pictured = viewModel.await("spectrogram rows") { it.trace.rows.size >= 12 }
+        val rows = pictured.trace.rows
+        assertTrue(rows.zipWithNext().all { (a, b) -> abs(b.time - a.time - a.duration) < 1e-6 }, "rows are not contiguous")
+        val stripe = rows.last().levels
+        assertTrue(abs(stripe.indices.maxBy { stripe[it] } - 50 - 7) <= 3)
         viewModel.stop()
-        assertTrue(viewModel.state.value.trace.points.isEmpty())
+        assertTrue(viewModel.state.value.trace.points.isEmpty() && viewModel.state.value.trace.rows.isEmpty())
     }
 
     @Test

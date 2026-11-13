@@ -27,9 +27,6 @@ class SpectralAnalyzer(val sampleRate: Int, val fftSize: Int, val frameLength: I
     /** Half-width of the window's spectral main lobe, in Hz. */
     val lobeHz: Double = 2.0 * sampleRate / frameLength
 
-    /** How much finer the bins are than the frame alone would give. */
-    val zeroPadding: Double = fftSize.toDouble() / frameLength
-
     private val fft = Fft(fftSize)
     private val window = DoubleArray(frameLength) { 0.5 - 0.5 * cos(2 * PI * it / frameLength) }
     private val windowAcf = DoubleArray(maxLag + 1)
@@ -37,7 +34,7 @@ class SpectralAnalyzer(val sampleRate: Int, val fftSize: Int, val frameLength: I
     private val im = DoubleArray(fftSize)
 
     init {
-        require(frameLength < fftSize) { "frameLength must be smaller than fftSize" }
+        require(frameLength <= fftSize) { "frameLength must not exceed fftSize" }
         // Window autocorrelation via the same FFT (no wrap-around for lags <= fftSize - frameLength).
         window.copyInto(re)
         fft.forward(re, im)

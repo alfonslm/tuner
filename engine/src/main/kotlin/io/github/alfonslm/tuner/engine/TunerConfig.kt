@@ -25,6 +25,7 @@ data class TunerConfig(
     val focus: FocusConfig = FocusConfig(),
     val lock: LockConfig = LockConfig(),
     val display: DisplayConfig = DisplayConfig(),
+    val spectrogram: SpectrogramConfig = SpectrogramConfig(),
 )
 
 data class WideConfig(
@@ -83,4 +84,21 @@ data class DisplayConfig(
     val resetGapMs: Double = 300.0,
     val inTuneCents: Double = 3.0,
     val inTuneHoldMs: Double = 400.0,
+)
+
+/** The rolling spectrogram under the meter; see `FoldedSpectrum`. */
+data class SpectrogramConfig(
+    /** A row is computed every this many audio blocks (3 ≈ 16 rows per second). */
+    val everyBlocks: Int = 3,
+    /** Analysis window in periods of the target note: the stripe is about 400 / (periods · 8) cents wide at best. */
+    val periods: Double = 48.0,
+    /** ...capped at this length, which also bounds how much audio history is kept. */
+    val maxFrameMs: Double = 600.0,
+    /** Power counts from this many times the mean noise power upwards. */
+    val floorFactor: Double = 3.0,
+    /** A partial appears once its peak is this far above the noise (dB), at full weight [fadeInDb] further up. */
+    val minSnrDb: Double = 10.0,
+    val fadeInDb: Double = 10.0,
+    /** A partial this far above the noise (dB) is drawn at full brightness. */
+    val fullScaleDb: Double = 40.0,
 )

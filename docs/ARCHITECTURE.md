@@ -37,16 +37,16 @@ flowchart LR
   subgraph main [Main thread]
     vm[TunerViewModel<br/>StateFlow of TunerUiState] --> ui[TunerScreen<br/>note, needle, strings]
   end
-  eng -- "TunerReading, conflated (≈47 per second)" --> vm
+  eng -- "TunerReading (≈47 per second)" --> vm
   vm -- "TunerConfig (StateFlow)" --> pipe
 ```
 
 - The **audio thread** blocks on `AudioRecord.read`, runs the engine on each
   block, and emits the reading. The engine is single-threaded by design and
   lives entirely here.
-- The **main thread** only holds state and draws. The reading stream is
-  *conflated*: a slow frame on the UI side means it skips to the newest
-  reading, never that analysis waits.
+- The **main thread** only holds state and draws. Readings are queued for it,
+  and if it ever falls more than about a second behind, the oldest are
+  dropped: a slow frame on the UI side never makes analysis wait.
 - Configuration travels the other way as an immutable `TunerConfig` in a
   `StateFlow`; the audio loop compares it between blocks. No locks anywhere.
 
@@ -76,17 +76,16 @@ web page: browsers only *request* that processing be turned off.
 
 - **The meter**: a ±50 cent scale with a needle, coloured by how close the
   string is.
-- **The waterfall** under it: the last eight seconds of the reading on the
-  same horizontal scale, newest at the top and moving down. A vertical trace
-  is a steady pitch, a slope is a pitch that is changing, so the player sees
-  how far a turn of the peg moved the string and whether a note drifts as it
-  rings. The history belongs to one string and starts over when the tuner
-  moves to another; silence between plucks shows as a gap.
-  The trace has a **width taken from the spectrum**: the line is the reading,
-  and the band around it reaches as far either side as the string's overtones
-  disagreed about the pitch at that moment (see "Partial spread" in section
-  4). A clean, settled note is a thin line; a stiff string, a noisy room or a
-  note dying away is a wider band.
+- **The waterfall** under it: a rolling spectrogram of the last eight seconds
+  on the same horizontal scale, newest at the top and moving down. Each row is
+  the string's spectrum with the noise floor removed, so brightness is energy:
+  a clean note is a narrow stripe, a stiff or dying one a wider and fainter
+  one, a second string a second stripe, and silence is dark. A stripe running
+  straight down is a steady pitch, a slanted one a pitch that is changing, so
+  the player sees how far a turn of the peg moved the string and whether a
+  note drifts as it rings. A thin line over it is the tuner's reading at each
+  moment, in the colour the needle had. The picture belongs to one string and
+  starts over when the tuner moves to another.
 - **The note name**: large while the tuner is chromatic (it is then the main
   information), small once the instrument is known, because the row of string
   buttons already highlights which string is sounding.
@@ -106,8 +105,9 @@ engine/src/main/kotlin/io/github/alfonslm/tuner/
     Fft.kt                  radix-2 FFT
     Spectral.kt             windowed power spectrum → filtered autocorrelation
     WideDetector.kt         note-agnostic pitch detector (acquisition, watchdog)
-    HarmonicComb.kt         string model: comb filter, harmonic validation, partial spread
+    HarmonicComb.kt         string model: comb filter + harmonic validation
     FocusedDetector.kt      target-aware pitch detector (tracking)
+    FoldedSpectrum.kt       one row of the spectrogram: partials folded onto a cents scale
   music/
     Notes.kt                Hz ↔ MIDI ↔ names, cents
     Instruments.kt          presets: strings + harmonic model per instrument
@@ -120,12 +120,12 @@ app/src/main/kotlin/io/github/alfonslm/tuner/app/
   audio/MicrophoneSource.kt AudioRecord implementation (see above)
   TunerPipeline.kt          AudioSource + config → Flow<TunerReading>
   TunerViewModel.kt         UI state, start/stop, settings changes
-  PitchTrace.kt             the last 8 s of readings, for the waterfall
+  PitchTrace.kt             the last 8 s of spectrogram rows and readings
   Settings.kt               persisted choices (SharedPreferences)
   MainActivity.kt           permission, lifecycle, keep-screen-on
   ui/TunerScreen.kt         the screen
   ui/Meter.kt               the cents scale and needle
-  ui/Waterfall.kt           the reading's history, falling away under the meter
+  ui/Waterfall.kt           the rolling spectrogram under the meter
   ui/Theme.kt               colours
 app/src/test/               the pipeline driven by a synthetic microphone
 ```
@@ -232,23 +232,43 @@ A reading is only valid if all three hold:
 | `explained` | Of the *tonal* energy (above the measured noise floor), how much do these partials account for? Includes where a lower note's own partials would be. | another string a fourth/fifth away; the tail of a lower string whose 2nd/3rd partial lands near the target |
 | `fundamentalSupport` | Is there energy on partials that are *not* multiples of 2, 3, 5, 7? | a note an octave (or twelfth…) *above* the target, all of whose partials fit the comb — e.g. E4 while locked on E2 |
 
-### Partial spread: more than one number
+### The spectrogram
 
-A pitch estimate is one number for the whole sound. The spectrum knows more:
-every partial is its own measurement of the fundamental (its frequency divided
-by its number, corrected for the model's stiffness), and on a real string they
-never agree exactly. Stiffness the preset does not account for fans them out,
-noise and other ringing strings pull single partials aside, and a dying note
-leaves ragged remains.
+The waterfall needs a spectrum on the meter's scale: ±50 cents around the
+target. Taken naively that is hopeless. At 82 Hz, ±50 cents is ±2.4 Hz, far
+below what any window of practical length resolves; the row would be one
+smear. `FoldedSpectrum` gets a usable picture out of ordinary spectrum
+analysis with two moves:
 
-`partialSpread()` reads each partial's frequency off the power spectrum
-(quadratic interpolation of the peak with the standard bias correction for a
-Hann window, good to about a thousandth of a bin) and returns the
-power-weighted RMS distance, in cents, of those per-partial readings from the
-estimate. It is reported as `TunerReading.spreadCents`, smoothed like the
-reading itself, in both modes. The estimate stays the number to tune by; the
-spread says how much the sound backs it up, and the waterfall draws it as the
-width of the trace.
+- **Fold the partials.** Every partial carries the same pitch information, and
+  partial k is k times sharper on a cents scale, because the window's
+  resolution is fixed in Hz while a cent at partial k is k times as many Hz.
+  The neighbourhoods of all partials are mapped onto one cents axis and added,
+  the sharper ones counting for more (weight k²).
+- **Use a long window.** 48 periods of the target (capped at 0.6 s) instead of
+  the detectors' 16. A history display can afford the delay: each row is dated
+  at the middle of its window, about a quarter of a second back, which is a
+  few pixels of an eight-second waterfall. The needle is not affected.
+
+The **noise floor is removed per partial**: the floor is the median power in
+that partial's own neighbourhood, and only power above three times that
+counts, so hum and rumble near one partial do not lift the floor anywhere
+else. A partial is drawn only once its peak stands 10 dB clear. Each partial's
+slice is scaled to its own peak before adding (the picture is about where the
+energy is, not which partial is loudest), and the row as a whole is scaled by
+how far the strongest partial is above the noise, so a note that fades away
+fades from the display.
+
+With all eight partials present the stripe is about 9 cents wide. It is wider
+when the sound gives less to go on: only low partials left, overtones that
+disagree, a pitch that moved within the window. Nothing in the row is derived
+from the pitch estimate; the stripe and the needle are two independent views
+of the same sound. On a string much stiffer than its preset assumes they can
+sit a few cents apart, because the stripe is dominated by the upper partials
+and the reading deliberately is not.
+
+A row is produced every third block (about 16 per second) and travels in
+`TunerReading.spectrum`.
 
 ## 5. Automatic switching
 
@@ -370,7 +390,7 @@ an alternate tuning is one entry (string notes + harmonic model).
 
 `./gradlew test` needs no device. It runs:
 
-- **47 engine tests** against a plucked-string synthesizer (inharmonic
+- **51 engine tests** against a plucked-string synthesizer (inharmonic
   partials with individual decay, weak fundamental, white noise, mains hum):
   - each guitar string is identified, locked within 0.5 s of the pluck, and
     read to within 0.3 cent;
@@ -382,25 +402,27 @@ an alternate tuning is one entry (string notes + harmonic model).
     instrument is rejected even with the comb fully open;
   - E2 ↔ E4, string changes, chromatic hand-off through a semitone, hold and
     release, and pinning behave as described above;
-  - the partial spread is under 0.2 cent for an ideal string and grows with
-    stiffness, noise, and a second string sounding;
+  - the spectrogram: a string shows as a stripe at most 11 cents wide within
+    1 cent of where it is, on every string; noise, silence and mains hum leave
+    the row empty; two strings 30 cents apart show as two stripes;
   - automatic mode: every pair of strings of every preset identifies its
     instrument (or stays undecided where two instruments share the pair), and
     the engine recognises guitar, bass, ukulele, violin, viola and cello from
     two plucked strings (a guitar within half a second of the second pluck).
-- **11 app tests**. Six drive the real pipeline (view model → flow → engine)
-  with a synthetic microphone: a tone gets locked and shown and leaves a
-  steady history, stopping closes the stream, a microphone that fails to open
-  is reported, settings changes reach the running engine, settings persist,
-  and automatic mode recognises a guitar and offers its strings. Five cover
-  the waterfall's history: it records offset and spread, runs on through
-  silence, forgets what is older than its window, and starts over on another
-  string.
+- **12 app tests**. Six drive the real pipeline (view model → flow → engine)
+  with a synthetic microphone: a tone gets locked and shown, its spectrogram
+  rows arrive without a gap, stopping closes the stream, a microphone that
+  fails to open is reported, settings changes reach the running engine,
+  settings persist, and automatic mode recognises a guitar and offers its
+  strings. Six cover the waterfall's history: it collects readings and rows,
+  runs on through silence, forgets what is older than its window, and starts
+  over on another string.
 
 `./gradlew :app:validateDebugScreenshotTest` renders the Compose screen on
-the JVM in eleven states (idle, searching, locked sharp, in tune, held
-reading, pinned, chromatic with the filter off, permission denied, and three
-of automatic mode) and compares them
+the JVM in twelve states (idle, searching, locked sharp, in tune, held
+reading, pinned, chromatic with the filter off, permission denied, three of
+automatic mode, and one fed by the real engine on a synthesized string being
+tuned up) and compares them
 with the reference images in `app/src/screenshotTestDebug/reference`. After an
 intentional UI change, regenerate them with `:app:updateDebugScreenshotTest`.
 
@@ -420,6 +442,10 @@ been through the engine yet.
   to low E, another instrument playing) biases any estimator. The validation
   rejects such frames rather than show a wrong value, so the needle may drop
   out instead.
+- **The spectrogram costs an extra FFT** of up to 32768 points sixteen times a
+  second. That is about 1 ms each on a desktop JVM; whether a slow phone keeps
+  up is one of the things to measure on a device. `spectrogram.everyBlocks`
+  and `spectrogram.periods` trade smoothness and sharpness for CPU.
 - **Inharmonicity is assumed, not measured.** Fitting `B` per string from the
   observed partials would remove the remaining ≈0.5 cent bias.
 - **Automatic mode knows standard tunings only.** An instrument tuned a full

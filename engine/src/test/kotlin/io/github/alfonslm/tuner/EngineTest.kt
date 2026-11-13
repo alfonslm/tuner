@@ -89,24 +89,6 @@ class EngineTest {
         assertTrue(!far.inTune)
     }
 
-    @Test
-    fun `reports how far the overtones disagree, in both modes`() {
-        val clean = run(engine(), pluckedString(1.5, detune(A2, -9.0)))
-        val searching = clean.first { it.voiced }
-        assertEquals(PitchSource.WIDE, searching.source)
-        assertTrue(searching.spreadCents!! < 1, "wide: ${searching.spreadCents}")
-        assertTrue(clean.between(1.0, 1.5).all { it.source == PitchSource.FOCUSED && it.spreadCents!! < 0.5 })
-
-        // A much stiffer string than the guitar preset expects: visibly wider, and widest
-        // early on, while the upper partials that disagree most are still ringing.
-        val stiff = run(engine(), pluckedString(1.5, detune(A2, -9.0), inharmonicity = 6e-4))
-        assertTrue(stiff.between(0.5, 1.0).all { it.voiced && it.spreadCents!! > 3 })
-        assertTrue(stiff.zip(clean).filter { (a, _) -> a.time >= 0.5 }.all { (a, b) -> a.spreadCents!! > 4 * b.spreadCents!! })
-        assertTrue(stiff.last().spreadCents!! < stiff.first { it.time >= 0.5 }.spreadCents!!)
-
-        assertTrue(run(engine(), silence(0.5)).all { it.spreadCents == null })
-    }
-
     // --- switching strings ---
 
     @Test

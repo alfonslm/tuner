@@ -12,7 +12,10 @@
     <string name="start">Start tuner</string>
     <string name="stop">Stop</string>
     <string name="no_note">–</string>
-    <string name="cents_value">%1$s cents</string>
+    <plurals name="cents_value">
+        <item quantity="one">%1$s cent</item>
+        <item quantity="other">%1$s cents</item>
+    </plurals>
     <string name="hertz_value">%1$s Hz</string>
     <string name="pin_string">Keep the tuner on %1$s</string>
 

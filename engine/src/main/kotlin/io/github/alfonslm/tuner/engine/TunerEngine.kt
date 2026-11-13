@@ -1,15 +1,16 @@
 package io.github.alfonslm.tuner.engine
 
 import io.github.alfonslm.tuner.dsp.AnalyzerPool
-import io.github.alfonslm.tuner.dsp.CombGeometry
 import io.github.alfonslm.tuner.dsp.FocusedDetector
 import io.github.alfonslm.tuner.dsp.FocusedDetectorOptions
 import io.github.alfonslm.tuner.dsp.FocusedEstimate
+import io.github.alfonslm.tuner.dsp.FoldedSpectrum
+import io.github.alfonslm.tuner.dsp.FoldedSpectrumOptions
 import io.github.alfonslm.tuner.dsp.PitchEstimate
+import io.github.alfonslm.tuner.dsp.SPECTRUM_COLUMNS
 import io.github.alfonslm.tuner.dsp.SpectralAnalyzer
 import io.github.alfonslm.tuner.dsp.WideDetector
 import io.github.alfonslm.tuner.dsp.nextPowerOfTwo
-import io.github.alfonslm.tuner.dsp.partialSpread
 import io.github.alfonslm.tuner.music.AUTO_INSTRUMENT_ID
 import io.github.alfonslm.tuner.music.InstrumentIdentifier
 import io.github.alfonslm.tuner.music.InstrumentPreset
@@ -25,7 +26,6 @@ import kotlin.math.ceil
 import kotlin.math.log10
 import kotlin.math.log2
 import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
@@ -40,6 +40,9 @@ import kotlin.math.roundToInt
  *     focused detector (harmonic comb around the target) produces the reading
  *     and the wide detector only acts as a watchdog for a change of string;
  *  4. the reading is smoothed for display.
+ *
+ * Every few blocks the engine also produces a row of the rolling spectrogram
+ * for whichever target is on display.
  *
  * With the automatic instrument, the engine starts out chromatic over the range
  * of all instruments and passes every settled note to an [InstrumentIdentifier];
@@ -70,13 +73,7 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         var handoffFrames = 0
     }
 
-    private class Pitch(
-        val frequency: Double,
-        val target: Target,
-        val source: PitchSource,
-        val confidence: Double,
-        val spreadCents: Double?,
-    )
+    private class Pitch(val frequency: Double, val target: Target, val source: PitchSource, val confidence: Double)
 
     private val pool = AnalyzerPool()
     private val detectors = HashMap<String, FocusedDetector>()
@@ -84,13 +81,18 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
     private lateinit var wideAnalyzer: SpectralAnalyzer
     private lateinit var wideDetector: WideDetector
     private lateinit var widePower: DoubleArray
-    private lateinit var wideGeometry: CombGeometry
     private lateinit var wideFrame: FloatArray
     private lateinit var ring: RingBuffer
     private lateinit var stability: StabilityWindow
     private lateinit var smoother: ReadingSmoother
     private var lock: Lock? = null
     private var samples = 0L
+
+    /** Spectrogram analysis for the target currently on display; rebuilt when that changes. */
+    private var spectrum: FoldedSpectrum? = null
+    private var spectrumTargetId: String? = null
+    private var spectrumFrame = FloatArray(0)
+    private var blocks = 0L
 
     /** Automatic mode: the instrument recognised from the strings heard so far. */
     private val identifier = InstrumentIdentifier()
@@ -128,7 +130,7 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         samples += block.size
         val time = samples.toDouble() / sampleRate
 
-        if (!ring.copyLatest(wideFrame)) return reading(time, -120.0, null, null, null, false)
+        if (!ring.copyLatest(wideFrame)) return reading(time, -120.0, null, null, false)
 
         // 1. Wide-band analysis: acquisition while searching, watchdog while locked.
         val rms = wideAnalyzer.powerSpectrum(wideFrame, widePower)
@@ -150,7 +152,7 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         if (lock != null) pitch = trackLocked(time, audible, wide, settled)
         if (lock == null) {
             if (wide != null && wideTarget != null) {
-                pitch = Pitch(wide.frequency, wideTarget, PitchSource.WIDE, wide.clarity, wideSpread(wide))
+                pitch = Pitch(wide.frequency, wideTarget, PitchSource.WIDE, wide.clarity)
             }
             if (config.smartFilter == SmartFilterMode.AUTO && settled != null) {
                 engage(settled.target, settled.cents, pinned = false, time)
@@ -159,12 +161,12 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         adaptComb(pitch)
 
         // 4. Display smoothing.
+        val row = spectrumRow(time, audible, pitch?.target ?: lock?.target)
         val result = if (pitch == null) {
-            reading(time, levelDb, null, null, null, false)
+            reading(time, levelDb, null, null, false, row)
         } else {
-            val offset = centsBetween(pitch.frequency, pitch.target.frequency)
-            val smoothed = smoother.push(pitch.target.id, offset, pitch.spreadCents, time)
-            reading(time, levelDb, pitch, smoothed.cents, smoothed.spreadCents, smoothed.inTune)
+            val smoothed = smoother.push(pitch.target.id, centsBetween(pitch.frequency, pitch.target.frequency), time)
+            reading(time, levelDb, pitch, smoothed.cents, smoothed.inTune, row)
         }
 
         // 5. Automatic mode: every settled note is a clue to which instrument this is.
@@ -172,6 +174,46 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
             identify(settled.target.frequency * centsToRatio(settled.cents), time)
         }
         return result
+    }
+
+    /**
+     * The next row of the spectrogram, if one is due. Rows are centred on the
+     * target on display and keep coming through silence (as empty rows) for as
+     * long as there is one, so the picture scrolls evenly.
+     */
+    private fun spectrumRow(time: Double, audible: Boolean, target: Target?): SpectrumRow? {
+        val options = config.spectrogram
+        if (blocks++ % options.everyBlocks != 0L || target == null) return null
+        var analysis = spectrum
+        if (analysis == null || spectrumTargetId != target.id) {
+            analysis = FoldedSpectrum(
+                sampleRate,
+                target.frequency,
+                preset.harmonics,
+                FoldedSpectrumOptions(
+                    periods = options.periods,
+                    maxFrame = (options.maxFrameMs * sampleRate / 1000).roundToInt(),
+                    maxPartialHz = config.maxPartialHz,
+                    floorFactor = options.floorFactor,
+                    minSnrDb = options.minSnrDb,
+                    fadeInDb = options.fadeInDb,
+                    fullScaleDb = options.fullScaleDb,
+                ),
+            )
+            spectrum = analysis
+            spectrumTargetId = target.id
+            spectrumFrame = FloatArray(analysis.frameLength)
+        }
+        if (!ring.copyLatest(spectrumFrame)) return null
+        val levels = FloatArray(SPECTRUM_COLUMNS)
+        if (audible) analysis.compute(spectrumFrame, levels)
+        return SpectrumRow(
+            // The row describes the audio in its window, which is centred half a window back.
+            time = time - analysis.frameLength / (2.0 * sampleRate),
+            duration = options.everyBlocks * blockSize.toDouble() / sampleRate,
+            targetId = target.id,
+            levels = levels,
+        )
     }
 
     /** Switches to an instrument's own strings once the notes heard so far single one out. */
@@ -184,10 +226,6 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
             engage(string, centsBetween(frequency, string.frequency), pinned = false, time)
         }
     }
-
-    /** The partial spread of a wide-band estimate, read from the spectrum the wide detector just used. */
-    private fun wideSpread(wide: PitchEstimate): Double? =
-        partialSpread(widePower, wide.frequency, preset.harmonics, wideGeometry, wideAnalyzer.zeroPadding)
 
     /** Locked mode: trust the focused detector, use the wide one to notice that the player moved on. */
     private fun trackLocked(time: Double, audible: Boolean, wide: PitchEstimate?, settled: Consensus?): Pitch? {
@@ -204,20 +242,20 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
             if (!elsewhere || wideAgrees) {
                 lock.lastHeard = time
                 val target = followTarget(focus.frequency, time)
-                return Pitch(focus.frequency, target, PitchSource.FOCUSED, focus.salience, focus.spreadCents)
+                return Pitch(focus.frequency, target, PitchSource.FOCUSED, focus.salience)
             }
         }
 
         if (elsewhere && settled != null && wide != null) {
             // A different note is clearly and steadily sounding: move the filter to it.
             engage(settled.target, settled.cents, pinned = false, time)
-            return Pitch(wide.frequency, settled.target, PitchSource.WIDE, wide.clarity, wideSpread(wide))
+            return Pitch(wide.frequency, settled.target, PitchSource.WIDE, wide.clarity)
         }
 
         if (wide != null && abs(centsBetween(wide.frequency, lock.target.frequency)) <= lock.captureCents) {
             // The comb lost the string (e.g. it was re-tuned in a jump) but it is still in range.
             lock.lastHeard = time
-            return Pitch(wide.frequency, lock.target, PitchSource.WIDE, wide.clarity, wideSpread(wide))
+            return Pitch(wide.frequency, lock.target, PitchSource.WIDE, wide.clarity)
         }
 
         if (!lock.pinned && (time - lock.lastHeard) * 1000 > config.lock.holdMs) this.lock = null
@@ -314,7 +352,6 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         wideAnalyzer = pool.get(sampleRate, nextPowerOfTwo(wideLength + longestLag), wideLength)
         wideDetector = WideDetector(wideAnalyzer, minHz, targets.maxHz, config.wide.peakPickRatio, config.maxPartialHz)
         widePower = DoubleArray(wideAnalyzer.bins)
-        wideGeometry = CombGeometry(wideAnalyzer.binHz, wideAnalyzer.lobeHz, min(config.maxPartialHz, 0.4 * sampleRate))
         wideFrame = FloatArray(wideLength)
 
         val capacity = ceil(
@@ -323,6 +360,7 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
                 config.focus.maxFrameMs * sampleRate / 1000,
                 config.focus.minFrameMs * sampleRate / 1000,
                 config.focus.minPeriods * sampleRate / minHz,
+                config.spectrogram.maxFrameMs * sampleRate / 1000,
             ),
         ).toInt()
         if (!::ring.isInitialized || ring.capacity != capacity) ring = RingBuffer(capacity)
@@ -333,6 +371,8 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         smoother = ReadingSmoother(config.display)
         detectors.clear()
         lock = null
+        spectrum = null
+        spectrumTargetId = null
 
         // A pin only makes sense for a target of the current instrument.
         val pinned = config.pinnedTargetId?.let(targets::byId)
@@ -348,8 +388,8 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
         levelDb: Double,
         pitch: Pitch?,
         cents: Double?,
-        spreadCents: Double?,
         inTune: Boolean,
+        spectrum: SpectrumRow? = null,
     ): TunerReading {
         val lock = lock
         return TunerReading(
@@ -361,10 +401,10 @@ class TunerEngine(val sampleRate: Int, val blockSize: Int, config: TunerConfig =
             target = pitch?.target ?: lock?.target,
             frequency = if (pitch != null && cents != null) pitch.target.frequency * centsToRatio(cents) else null,
             cents = cents,
-            spreadCents = spreadCents,
             confidence = pitch?.confidence ?: 0.0,
             inTune = inTune,
             lock = lock?.let { LockInfo(it.target, it.pinned, it.widthCents) },
+            spectrum = spectrum,
         )
     }
 }

@@ -13,7 +13,6 @@ import io.github.alfonslm.tuner.dsp.buildComb
 import io.github.alfonslm.tuner.dsp.harmonicProfile
 import io.github.alfonslm.tuner.dsp.nextPowerOfTwo
 import io.github.alfonslm.tuner.dsp.partialFrequency
-import io.github.alfonslm.tuner.dsp.partialSpread
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -23,7 +22,6 @@ import kotlin.math.roundToInt
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DspTest {
@@ -112,50 +110,6 @@ class DspTest {
             analyzer.powerSpectrum(whiteNoise(0.2, 0.05, seed), power)
             assertTrue(harmonicProfile(power, 110.0, guitar, geometry).salience < 0.25)
         }
-    }
-
-    /** Partial spread of the frame ending at 20000, measured around the true pitch `f0`. */
-    private fun spread(signal: FloatArray, f0: Double, model: HarmonicModel = HarmonicModel(8, 0.0)): Double? {
-        val analyzer = pool.get(fs, 8192, 7200)
-        val power = DoubleArray(analyzer.bins)
-        analyzer.powerSpectrum(signal.copyOfRange(20000 - 7200, 20000), power)
-        return partialSpread(power, f0, model, CombGeometry(analyzer.binHz, analyzer.lobeHz, 5000.0), analyzer.zeroPadding)
-    }
-
-    @Test
-    fun `the partials of an ideal string agree about the pitch`() {
-        for ((name, f0) in GUITAR_STRINGS) {
-            for (offset in listOf(-31.0, 0.0, 17.0)) {
-                val f = detune(f0, offset)
-                val width = assertNotNull(spread(pluckedString(0.5, f), f), name)
-                assertTrue(width < 0.2, "$name $offset: $width")
-            }
-        }
-    }
-
-    @Test
-    fun `stiffness, noise and a second string each make the spread wider`() {
-        val f = 196.0
-        val clean = spread(pluckedString(0.5, f), f)!!
-
-        // Stiff string measured against an ideal-string model: the upper partials run sharp.
-        val stiff = spread(pluckedString(0.5, f, inharmonicity = 4e-4), f)!!
-        assertTrue(stiff > 2 && stiff > 10 * clean, "stiff $stiff vs clean $clean")
-        // ...and the right model accounts for it.
-        val modelled = spread(pluckedString(0.5, f, inharmonicity = 4e-4), f, HarmonicModel(8, 4e-4))!!
-        assertTrue(modelled < 0.3, "modelled $modelled")
-
-        val noisy = spread(mix(pluckedString(0.5, f, amplitude = 0.1), whiteNoise(0.5, 0.03)), f)!!
-        assertTrue(noisy > 3 * clean, "noisy $noisy vs clean $clean")
-
-        // Another string a fifth above, slightly out of tune: its partials land near every third of ours.
-        val both = spread(mix(pluckedString(0.5, f), pluckedString(0.5, detune(f * 1.5, 25.0), seed = 5)), f)!!
-        assertTrue(both > 2, "two strings $both")
-    }
-
-    @Test
-    fun `no spread is reported when nothing stands out of the spectrum`() {
-        assertNull(spread(silence(0.5), 196.0))
     }
 
     @Test

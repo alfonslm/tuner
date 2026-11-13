@@ -1,6 +1,7 @@
 package io.github.alfonslm.tuner.app
 
 import io.github.alfonslm.tuner.engine.PitchSource
+import io.github.alfonslm.tuner.engine.SpectrumRow
 import io.github.alfonslm.tuner.engine.TunerMode
 import io.github.alfonslm.tuner.engine.TunerReading
 import io.github.alfonslm.tuner.music.Target
@@ -12,12 +13,14 @@ class PitchTraceTest {
     private val a2 = Target("s1:A2", "A2", 45, 110.0)
     private val d3 = Target("s2:D3", "D3", 50, 146.83)
 
+    private fun row(time: Double, target: Target = a2) = SpectrumRow(time, 0.064, target.id, FloatArray(101))
+
     private fun reading(
         time: Double,
         target: Target? = a2,
         cents: Double? = 0.0,
         inTune: Boolean = false,
-        spread: Double? = 1.0,
+        spectrum: SpectrumRow? = null,
     ) = TunerReading(
         time = time,
         instrumentId = "guitar",
@@ -27,10 +30,10 @@ class PitchTraceTest {
         target = target,
         frequency = cents?.let { 110.0 },
         cents = cents,
-        spreadCents = spread.takeIf { cents != null },
         confidence = 1.0,
         inTune = inTune,
         lock = null,
+        spectrum = spectrum,
     )
 
     @Test
@@ -42,15 +45,6 @@ class PitchTraceTest {
         assertEquals(listOf(-20f, -12f, 1.5f), trace.points.map { it.cents })
         assertEquals(listOf(false, false, true), trace.points.map { it.inTune })
         assertEquals(1.04, trace.now)
-    }
-
-    @Test
-    fun `keeps the overtone spread of each moment, as the width of the trace`() {
-        val trace = PitchTrace()
-            .add(reading(1.00, spread = 6.5))
-            .add(reading(1.02, spread = 2.0))
-            .add(reading(1.04, spread = null)) // could not be measured: drawn as the bare line
-        assertEquals(listOf(6.5f, 2f, 0f), trace.points.map { it.spread })
     }
 
     @Test
@@ -70,6 +64,30 @@ class PitchTraceTest {
         assertEquals(12.0, trace.points.last().time, 1e-9)
         // Everything scrolls away once the note has been gone for the whole window.
         assertTrue(trace.add(reading(12.0 + PitchTrace.SECONDS + 0.1, cents = null)).points.isEmpty())
+    }
+
+    @Test
+    fun `collects the spectrogram rows that come with some readings, also through silence`() {
+        val first = row(0.8)
+        val second = row(0.864)
+        val trace = PitchTrace()
+            .add(reading(1.00, spectrum = first))
+            .add(reading(1.02))
+            .add(reading(1.06, target = null, cents = null, spectrum = second))
+        assertEquals(listOf(first, second), trace.rows)
+        assertEquals(2, trace.points.size)
+        assertEquals("s1:A2", trace.targetId)
+
+        // Rows scroll out of the window like the reading does.
+        assertTrue(trace.add(reading(0.864 + PitchTrace.SECONDS + 0.01, cents = null)).rows.isEmpty())
+    }
+
+    @Test
+    fun `rows for another string start the picture over`() {
+        val trace = PitchTrace().add(reading(1.0, spectrum = row(0.8))).add(reading(1.1, target = null, cents = null, spectrum = row(0.9, d3)))
+        assertEquals("s2:D3", trace.targetId)
+        assertEquals(listOf("s2:D3"), trace.rows.map { it.targetId })
+        assertTrue(trace.points.isEmpty())
     }
 
     @Test

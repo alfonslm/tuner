@@ -42,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
@@ -296,7 +297,8 @@ private fun Display(state: TunerUiState, modifier: Modifier = Modifier) {
             ) {
                 val numbers = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = TABULAR)
                 if (shown != null && cents != null) {
-                    Text(stringResource(R.string.cents_value, signed(cents.roundToInt())), style = numbers)
+                    val rounded = cents.roundToInt()
+                    Text(pluralStringResource(R.plurals.cents_value, abs(rounded), signed(rounded)), style = numbers)
                     Text(
                         stringResource(R.string.hertz_value, String.format(Locale.US, "%.1f", shown.frequency)),
                         style = numbers,
