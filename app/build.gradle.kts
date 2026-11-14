@@ -18,14 +18,30 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "1.0.0-beta"
+    }
+
+    // A release is signed with the project's own key when one is given (the release workflow
+    // passes it in from the repository's secrets) and with the machine's debug key otherwise.
+    // The second kind installs fine, but cannot be installed over a build from another machine.
+    val keystore = System.getenv("TUNER_KEYSTORE_FILE")?.takeIf { it.isNotBlank() }
+    signingConfigs {
+        if (keystore != null) {
+            create("release") {
+                storeFile = file(keystore)
+                storePassword = System.getenv("TUNER_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("TUNER_KEY_ALIAS")
+                keyPassword = System.getenv("TUNER_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            // Not shrunk or obfuscated for now: every build tried on a phone so far was a debug
+            // build, and a shrunk one that has never been run is not something to hand out.
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 
