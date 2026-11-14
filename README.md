@@ -49,6 +49,19 @@ reports.
 | `engine` | The tuner: DSP, instruments, search/lock logic. Pure Kotlin, tested on the JVM. |
 | `app` | The Android app: microphone capture and the Compose UI. |
 
+## Releases
+
+A release is made by pushing a tag: `git tag v1.0.0-beta && git push origin v1.0.0-beta`. The
+`Release` workflow then runs the checks (recordings included), builds the APK and publishes it
+on GitHub; a tag with a hyphen becomes a pre-release. The tag has to match `versionName` in
+`app/build.gradle.kts`, and the notes are taken from `docs/releases/<tag>.md` if that exists.
+
+Without further setup each release is signed with a one-off key, so it cannot be installed over
+the one before. To sign them all with the same key, create a keystore once and add four
+repository secrets (Settings, Secrets and variables, Actions): `TUNER_KEYSTORE_BASE64` (the
+keystore file, base64-encoded), `TUNER_KEYSTORE_PASSWORD`, `TUNER_KEY_ALIAS` and
+`TUNER_KEY_PASSWORD`.
+
 ## Use
 
 1. Tap **Start tuner**, allow the microphone, and pluck a string. With the
