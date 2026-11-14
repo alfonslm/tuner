@@ -1,10 +1,18 @@
 name: Release
 
-# Pushing a tag like v1.0.0-beta builds the app, checks it and publishes it as a GitHub release
-# with the APK attached. A tag with a hyphen in it (v1.0.0-beta, v1.1.0-rc1) becomes a pre-release.
+# Builds the app, checks it and publishes it as a GitHub release with the APK attached.
+#
+#  - "Run workflow" on the Actions page (or pushing a tag like v1.0.0-beta) makes the release.
+#    The version is the versionName in app/build.gradle.kts; the tag is "v" plus that, and is
+#    created here if it does not exist yet. A version with a hyphen (1.0.0-beta, 1.1.0-rc1)
+#    becomes a pre-release.
+#  - On a pull request everything runs except the publishing, and the APK is kept as an
+#    artifact of the run: a rehearsal, and a build of the proposed change to try.
 on:
+  workflow_dispatch:
   push:
     tags: ["v*"]
+  pull_request:
 
 permissions:
   contents: write
@@ -26,6 +34,17 @@ jobs:
       - name: Install ffmpeg (decodes the recordings)
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
+      - name: Work out the version and the tag
+        run: |
+          version=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          tag="v$version"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "$tag" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match versionName $version"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+
       # The rule of this repository: nothing is handed out that has not been run against the
       # recordings of a real instrument. First, because the app's own tests use them once decoded.
       - name: Engine against the recordings
@@ -33,15 +52,6 @@ jobs:
 
       - name: Tests and lint
         run: ./gradlew test :app:lintDebug
-
-      - name: Check that the tag is the version in the build file
-        run: |
-          version=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match versionName $version"
-            exit 1
-          fi
-          echo "VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Build the APK
         env:
@@ -59,15 +69,27 @@ jobs:
           fi
           ./gradlew :app:assembleRelease
           cp app/build/outputs/apk/release/app-release.apk "tuner-$VERSION.apk"
+          echo "Built tuner-$VERSION.apk, signed with $SIGNED_WITH." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the APK with this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: tuner-${{ env.VERSION }}
+          path: tuner-${{ env.VERSION }}.apk
 
       - name: Publish the release
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          notes="docs/releases/$GITHUB_REF_NAME.md"
-          title="$(echo "$GITHUB_REF_NAME" | sed 's/-/ /')"
-          flags=()
-          case "$GITHUB_REF_NAME" in *-*) flags+=(--prerelease) ;; esac
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "::error::$TAG has already been released; raise versionName in app/build.gradle.kts first"
+            exit 1
+          fi
+          notes="docs/releases/$TAG.md"
+          title="$(echo "$TAG" | sed 's/-/ /')"
+          flags=(--target "$GITHUB_SHA")
+          case "$VERSION" in *-*) flags+=(--prerelease) ;; esac
           if [ -f "$notes" ]; then flags+=(--notes-file "$notes"); else flags+=(--generate-notes); fi
-          gh release create "$GITHUB_REF_NAME" "tuner-$VERSION.apk" --title "$title" --verify-tag "${flags[@]}"
-          echo "Published $title, signed with $SIGNED_WITH." >> "$GITHUB_STEP_SUMMARY"
+          gh release create "$TAG" "tuner-$VERSION.apk" --title "$title" "${flags[@]}"
+          echo "Published $title." >> "$GITHUB_STEP_SUMMARY"

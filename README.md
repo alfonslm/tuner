@@ -51,10 +51,12 @@ reports.
 
 ## Releases
 
-A release is made by pushing a tag: `git tag v1.0.0-beta && git push origin v1.0.0-beta`. The
-`Release` workflow then runs the checks (recordings included), builds the APK and publishes it
-on GitHub; a tag with a hyphen becomes a pre-release. The tag has to match `versionName` in
-`app/build.gradle.kts`, and the notes are taken from `docs/releases/<tag>.md` if that exists.
+A release is made from the Actions page: choose the `Release` workflow and "Run workflow" on
+`main` (pushing a tag such as `v1.0.0-beta` does the same). It runs the checks, recordings
+included, builds the APK and publishes it on GitHub. The version is `versionName` in
+`app/build.gradle.kts`, the tag is `v` plus that, and a version with a hyphen becomes a
+pre-release. The notes are taken from `docs/releases/<tag>.md` if that exists. On a pull request
+the same workflow runs as a rehearsal without publishing and keeps the APK as an artifact.
 
 Without further setup each release is signed with a one-off key, so it cannot be installed over
 the one before. To sign them all with the same key, create a keystore once and add four
