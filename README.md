@@ -9,9 +9,14 @@ Native Kotlin, Jetpack Compose. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 for how it works.
 
 <p>
-  <img src="app/src/screenshotTestDebug/reference/io/github/alfonslm/tuner/app/ui/TunerScreenshotsKt/RealEngineOutput_fd9b1438_0.png" width="240" alt="An A string being tuned up, with its spectrogram">
-  <img src="app/src/screenshotTestDebug/reference/io/github/alfonslm/tuner/app/ui/TunerScreenshotsKt/LockedInTune_fd9b1438_0.png" width="240" alt="G3 in tune">
+  <img src="docs/images/open-d-string.png" width="240" alt="An open D string, in tune, plucked four times">
+  <img src="docs/images/open-high-e-string.png" width="240" alt="An open high E string, 9 cents flat, plucked four times">
+  <img src="docs/images/open-g-string.png" width="240" alt="An open G string, 57 cents flat: the scale has slid towards it">
 </p>
+
+These are the app's own screen drawn from the recordings of a real guitar in
+[`recordings/`](recordings/README.md) (the D, high E and G strings, each plucked four times), run
+through the engine as the microphone's sound would be.
 
 ## Build
 
